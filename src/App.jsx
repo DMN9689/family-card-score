@@ -11,8 +11,55 @@ const STORAGE_INDEX_KEY = "family-card-score-current-index";
 
 const SCOREBOARD_REF = doc(db, "scoreboards", "family-card-score");
 
+const STACK_OPTIONS = [
+  { value: 0, label: "기본 = ×1" },
+  { value: 1, label: "1배 = ×2" },
+  { value: 2, label: "2배 = ×4" },
+  { value: 3, label: "3배 = ×8" },
+  { value: 4, label: "4배 = ×16" },
+  { value: 5, label: "5배 = ×32" },
+  { value: 6, label: "6배 = ×64" },
+  { value: 7, label: "7배 = ×128" },
+  { value: 8, label: "8배 = ×256" },
+];
+
+const PLAYER_RENAMES = {
+  동생: "딸",
+};
+
 function getMultiplierFromStack(stackCount) {
   return 2 ** Number(stackCount || 0);
+}
+
+function renamePlayerName(name) {
+  return PLAYER_RENAMES[name] || name;
+}
+
+function migrateScores(scores = {}) {
+  const nextScores = {};
+
+  Object.entries(scores).forEach(([player, score]) => {
+    const renamedPlayer = renamePlayerName(player);
+    nextScores[renamedPlayer] = (nextScores[renamedPlayer] || 0) + score;
+  });
+
+  return nextScores;
+}
+
+function migrateGames(games = []) {
+  return games.map((game) => ({
+    ...game,
+    rounds: (game.rounds || []).map((round) => ({
+      ...round,
+      ranks: {
+        1: renamePlayerName(round.ranks?.[1] || ""),
+        2: renamePlayerName(round.ranks?.[2] || ""),
+        3: renamePlayerName(round.ranks?.[3] || ""),
+        4: renamePlayerName(round.ranks?.[4] || ""),
+      },
+      scores: migrateScores(round.scores),
+    })),
+  }));
 }
 
 function createNewGame(gameNumber = 1) {
@@ -39,7 +86,7 @@ function loadLocalGames() {
       return [createNewGame(1)];
     }
 
-    return parsedGames;
+    return migrateGames(parsedGames);
   } catch {
     return [createNewGame(1)];
   }
@@ -63,6 +110,18 @@ function loadLocalCurrentGameIndex() {
   } catch {
     return 0;
   }
+}
+
+function StackSelect({ value, onChange }) {
+  return (
+    <select value={value} onChange={(e) => onChange(Number(e.target.value))}>
+      {STACK_OPTIONS.map((option) => (
+        <option key={option.value} value={option.value}>
+          {option.label}
+        </option>
+      ))}
+    </select>
+  );
 }
 
 function App() {
@@ -115,14 +174,29 @@ function App() {
         const data = snapshot.data();
 
         if (Array.isArray(data.games) && data.games.length > 0) {
-          setGames(data.games);
+          const migratedGames = migrateGames(data.games);
+          const hasChanged =
+            JSON.stringify(data.games) !== JSON.stringify(migratedGames);
 
           const nextIndex = Number(data.currentGameIndex || 0);
-          setCurrentGameIndex(
-            Number.isNaN(nextIndex)
-              ? 0
-              : Math.min(nextIndex, data.games.length - 1)
-          );
+          const safeIndex = Number.isNaN(nextIndex)
+            ? 0
+            : Math.min(nextIndex, migratedGames.length - 1);
+
+          setGames(migratedGames);
+          setCurrentGameIndex(safeIndex);
+
+          if (hasChanged) {
+            await setDoc(
+              SCOREBOARD_REF,
+              {
+                games: migratedGames,
+                currentGameIndex: safeIndex,
+                updatedAt: serverTimestamp(),
+              },
+              { merge: true }
+            );
+          }
         }
 
         setIsLoading(false);
@@ -323,15 +397,20 @@ function App() {
     resetRoundForm();
   }
 
-  function handleStackInput(value, setter) {
-    const number = Number(value);
+  function deleteGameHistoryKeepCurrent() {
+    const confirmed = window.confirm(
+      "현재 선택된 게임만 남기고 이전 초기화 이력을 삭제할까요?"
+    );
 
-    if (Number.isNaN(number) || number < 0) {
-      setter(0);
-      return;
-    }
+    if (!confirmed) return;
 
-    setter(Math.floor(number));
+    const currentOnlyGame = {
+      ...currentGame,
+      id: Date.now(),
+      gameNumber: 1,
+    };
+
+    saveScoreboard([currentOnlyGame], 0);
   }
 
   function formatScore(score) {
@@ -407,17 +486,11 @@ function App() {
             </label>
 
             <label>
-              전체 ×2 중첩횟수
-              <input
-                type="number"
-                min="0"
-                value={roundStack}
-                onChange={(e) =>
-                  handleStackInput(e.target.value, setRoundStack)
-                }
-              />
+              전체 배수
+              <StackSelect value={roundStack} onChange={setRoundStack} />
               <small>
-                {roundStack}회 = ×{getMultiplierFromStack(roundStack)}
+                {roundStack === 0 ? "기본" : `${roundStack}배`} = ×
+                {getMultiplierFromStack(roundStack)}
               </small>
             </label>
           </div>
@@ -438,17 +511,11 @@ function App() {
             </label>
 
             <label>
-              2등 ×2 중첩횟수
-              <input
-                type="number"
-                min="0"
-                value={rank2Stack}
-                onChange={(e) =>
-                  handleStackInput(e.target.value, setRank2Stack)
-                }
-              />
+              2등 배수
+              <StackSelect value={rank2Stack} onChange={setRank2Stack} />
               <small>
-                {rank2Stack}회 = ×{getMultiplierFromStack(rank2Stack)}
+                {rank2Stack === 0 ? "기본" : `${rank2Stack}배`} = ×
+                {getMultiplierFromStack(rank2Stack)}
               </small>
             </label>
           </div>
@@ -469,17 +536,11 @@ function App() {
             </label>
 
             <label>
-              3등 ×2 중첩횟수
-              <input
-                type="number"
-                min="0"
-                value={rank3Stack}
-                onChange={(e) =>
-                  handleStackInput(e.target.value, setRank3Stack)
-                }
-              />
+              3등 배수
+              <StackSelect value={rank3Stack} onChange={setRank3Stack} />
               <small>
-                {rank3Stack}회 = ×{getMultiplierFromStack(rank3Stack)}
+                {rank3Stack === 0 ? "기본" : `${rank3Stack}배`} = ×
+                {getMultiplierFromStack(rank3Stack)}
               </small>
             </label>
           </div>
@@ -500,17 +561,11 @@ function App() {
             </label>
 
             <label>
-              4등 ×2 중첩횟수
-              <input
-                type="number"
-                min="0"
-                value={rank4Stack}
-                onChange={(e) =>
-                  handleStackInput(e.target.value, setRank4Stack)
-                }
-              />
+              4등 배수
+              <StackSelect value={rank4Stack} onChange={setRank4Stack} />
               <small>
-                {rank4Stack}회 = ×{getMultiplierFromStack(rank4Stack)}
+                {rank4Stack === 0 ? "기본" : `${rank4Stack}배`} = ×
+                {getMultiplierFromStack(rank4Stack)}
               </small>
             </label>
           </div>
@@ -593,6 +648,15 @@ function App() {
             </button>
           ))}
         </div>
+
+        <button
+          className="secondary-button"
+          onClick={deleteGameHistoryKeepCurrent}
+          disabled={games.length <= 1}
+          style={{ marginTop: "12px" }}
+        >
+          초기화 이력 삭제
+        </button>
       </section>
     </div>
   );
