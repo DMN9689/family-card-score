@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
+import { doc, onSnapshot, serverTimestamp, setDoc } from "firebase/firestore";
 import "./App.css";
+import { db } from "./firebase";
 
 const DEFAULT_PLAYERS = ["아빠", "엄마", "아들", "동생"];
 const START_SCORE = 100;
 
 const STORAGE_KEY = "family-card-score-games";
 const STORAGE_INDEX_KEY = "family-card-score-current-index";
+
+const SCOREBOARD_REF = doc(db, "scoreboards", "family-card-score");
 
 function getMultiplierFromStack(stackCount) {
   return 2 ** Number(stackCount || 0);
@@ -21,7 +25,7 @@ function createNewGame(gameNumber = 1) {
   };
 }
 
-function loadSavedGames() {
+function loadLocalGames() {
   try {
     const savedGames = localStorage.getItem(STORAGE_KEY);
 
@@ -41,7 +45,7 @@ function loadSavedGames() {
   }
 }
 
-function loadSavedCurrentGameIndex() {
+function loadLocalCurrentGameIndex() {
   try {
     const savedIndex = localStorage.getItem(STORAGE_INDEX_KEY);
 
@@ -63,10 +67,12 @@ function loadSavedCurrentGameIndex() {
 
 function App() {
   const [players] = useState(DEFAULT_PLAYERS);
-  const [games, setGames] = useState(loadSavedGames);
-  const [currentGameIndex, setCurrentGameIndex] = useState(
-    loadSavedCurrentGameIndex
-  );
+
+  const [games, setGames] = useState(() => [createNewGame(1)]);
+  const [currentGameIndex, setCurrentGameIndex] = useState(0);
+
+  const [isLoading, setIsLoading] = useState(true);
+  const [firebaseError, setFirebaseError] = useState("");
 
   const [roundStack, setRoundStack] = useState(0);
 
@@ -83,12 +89,56 @@ function App() {
   const currentGame = games[safeCurrentGameIndex];
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(games));
-  }, [games]);
+    const unsubscribe = onSnapshot(
+      SCOREBOARD_REF,
+      async (snapshot) => {
+        if (!snapshot.exists()) {
+          const initialGames = loadLocalGames();
+          const initialIndex = Math.min(
+            loadLocalCurrentGameIndex(),
+            initialGames.length - 1
+          );
 
-  useEffect(() => {
-    localStorage.setItem(STORAGE_INDEX_KEY, String(safeCurrentGameIndex));
-  }, [safeCurrentGameIndex]);
+          setGames(initialGames);
+          setCurrentGameIndex(initialIndex);
+          setIsLoading(false);
+
+          await setDoc(SCOREBOARD_REF, {
+            games: initialGames,
+            currentGameIndex: initialIndex,
+            updatedAt: serverTimestamp(),
+          });
+
+          return;
+        }
+
+        const data = snapshot.data();
+
+        if (Array.isArray(data.games) && data.games.length > 0) {
+          setGames(data.games);
+
+          const nextIndex = Number(data.currentGameIndex || 0);
+          setCurrentGameIndex(
+            Number.isNaN(nextIndex)
+              ? 0
+              : Math.min(nextIndex, data.games.length - 1)
+          );
+        }
+
+        setIsLoading(false);
+        setFirebaseError("");
+      },
+      (error) => {
+        console.error(error);
+        setFirebaseError(
+          "Firebase 연결에 실패했습니다. Firestore Rules를 확인해 주세요."
+        );
+        setIsLoading(false);
+      }
+    );
+
+    return () => unsubscribe();
+  }, []);
 
   const currentScores = useMemo(() => {
     const scores = {};
@@ -109,6 +159,31 @@ function App() {
 
     return scores;
   }, [players, currentGame]);
+
+  async function saveScoreboard(nextGames, nextIndex) {
+    setGames(nextGames);
+    setCurrentGameIndex(nextIndex);
+
+    try {
+      await setDoc(
+        SCOREBOARD_REF,
+        {
+          games: nextGames,
+          currentGameIndex: nextIndex,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      setFirebaseError("");
+    } catch (error) {
+      console.error(error);
+      setFirebaseError(
+        "저장에 실패했습니다. 인터넷 연결 또는 Firestore Rules를 확인해 주세요."
+      );
+      alert("저장에 실패했습니다. Firebase 설정을 확인해 주세요.");
+    }
+  }
 
   function getAvailablePlayers(currentValue, blockedPlayers = []) {
     const blockedSet = new Set(blockedPlayers.filter(Boolean));
@@ -207,7 +282,7 @@ function App() {
       };
     });
 
-    setGames(updatedGames);
+    saveScoreboard(updatedGames, safeCurrentGameIndex);
     resetRoundForm();
   }
 
@@ -230,7 +305,7 @@ function App() {
       };
     });
 
-    setGames(updatedGames);
+    saveScoreboard(updatedGames, safeCurrentGameIndex);
   }
 
   function resetToNewGame() {
@@ -241,9 +316,10 @@ function App() {
     if (!confirmed) return;
 
     const newGame = createNewGame(games.length + 1);
+    const updatedGames = [...games, newGame];
+    const nextIndex = updatedGames.length - 1;
 
-    setGames([...games, newGame]);
-    setCurrentGameIndex(games.length);
+    saveScoreboard(updatedGames, nextIndex);
     resetRoundForm();
   }
 
@@ -263,6 +339,16 @@ function App() {
     return `${score}`;
   }
 
+  if (isLoading) {
+    return (
+      <div className="app">
+        <section className="card">
+          <h2>점수판 불러오는 중...</h2>
+        </section>
+      </div>
+    );
+  }
+
   return (
     <div className="app">
       <header className="header">
@@ -275,6 +361,12 @@ function App() {
           100점 초기화
         </button>
       </header>
+
+      {firebaseError && (
+        <section className="card">
+          <p className="empty">{firebaseError}</p>
+        </section>
+      )}
 
       <section className="card">
         <div className="section-title">
