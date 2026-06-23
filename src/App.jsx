@@ -3,7 +3,7 @@ import { doc, onSnapshot, serverTimestamp, setDoc } from "firebase/firestore";
 import "./App.css";
 import { db } from "./firebase";
 
-const DEFAULT_PLAYERS = ["아빠", "엄마", "아들", "동생"];
+const DEFAULT_PLAYERS = ["아빠", "엄마", "아들", "딸"];
 const START_SCORE = 100;
 
 const STORAGE_KEY = "family-card-score-games";

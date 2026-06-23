@@ -6,6 +6,7 @@ body {
   margin: 0;
   background: #f4f5f7;
   color: #1f2937;
+  color-scheme: light;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
 }
@@ -133,7 +134,14 @@ select {
   border: 1px solid #d1d5db;
   border-radius: 12px;
   padding: 0 12px;
-  background: white;
+  background: #ffffff;
+  color: #111827;
+  -webkit-text-fill-color: #111827;
+}
+
+select option {
+  background: #ffffff;
+  color: #111827;
 }
 
 .action-buttons {
