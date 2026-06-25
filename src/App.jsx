@@ -3,7 +3,7 @@ import { doc, onSnapshot, serverTimestamp, setDoc } from "firebase/firestore";
 import "./App.css";
 import { db } from "./firebase";
 
-const APP_VERSION = "hoola-score-v4";
+const APP_VERSION = "hoola-score-v5";
 
 const DEFAULT_PLAYERS = [
   { id: "p1", name: "재우" },
@@ -270,12 +270,27 @@ function calculateRoundScores({
   const roundMultiplier = getRoundModeMultiplier(roundMode, handType);
   const isBustRound = ["thankyou", "stop"].includes(roundMode) && Boolean(bustTargetId);
 
+  const hasAutoLastLoser = loserIds.some((playerId) => {
+    const input = playerInputs[playerId] || {};
+    return (
+      roundMode === "perfect" ||
+      Boolean(input.isUnregistered) ||
+      (isBustRound && playerId === bustTargetId)
+    );
+  });
+
   const details = loserIds.map((playerId) => {
     const input = playerInputs[playerId] || {};
     const isBustTarget = isBustRound && playerId === bustTargetId;
     const isPerfectMode = roundMode === "perfect";
     const isUnregistered = isPerfectMode || Boolean(input.isUnregistered);
-    const rank = isUnregistered || isBustTarget ? maxRank : Number(input.rank || 2);
+    const selectedRank = Number(input.rank || 2);
+
+    const rank =
+      isUnregistered || isBustTarget
+        ? maxRank
+        : Math.min(selectedRank, hasAutoLastLoser ? maxRank - 1 : maxRank);
+
     const baseScore = getRankBaseScore(rank);
     const sevenCount = Number(input.sevenCount || 0);
     const sevenMultiplier = getSevenMultiplier(sevenCount);
@@ -689,6 +704,18 @@ function App() {
     await saveData(nextGames, currentGameIndex);
   }
 
+  function scrollToTop() {
+    window.scrollTo(0, 0);
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+
+    requestAnimationFrame(() => {
+      window.scrollTo(0, 0);
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+    });
+  }
+
   function resetRoundForm() {
     setWinnerId("");
     setRoundMode("");
@@ -711,8 +738,8 @@ function App() {
       activePlayerIds: draftActivePlayerIds,
     };
 
-    await updateCurrentGame(nextGame);
     resetRoundForm();
+    await updateCurrentGame(nextGame);
   }
 
   async function handleCreateNewGame() {
@@ -720,11 +747,11 @@ function App() {
     const nextGames = [...games, nextGame];
     const nextIndex = nextGames.length - 1;
 
-    await saveData(nextGames, nextIndex);
-
     setShowSettings(true);
     resetRoundForm();
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    scrollToTop();
+
+    await saveData(nextGames, nextIndex);
   }
 
   async function handleDeleteGame(gameIndex) {
@@ -733,9 +760,10 @@ function App() {
     if (games.length <= 1) {
       const nextGame = createNewGame();
 
-      await saveData([nextGame], 0);
       setShowSettings(true);
       resetRoundForm();
+
+      await saveData([nextGame], 0);
       return;
     }
 
@@ -751,8 +779,8 @@ function App() {
 
     nextIndex = Math.min(nextIndex, nextGames.length - 1);
 
-    await saveData(nextGames, nextIndex);
     resetRoundForm();
+    await saveData(nextGames, nextIndex);
   }
 
   async function handleDeleteAllGames() {
@@ -760,32 +788,33 @@ function App() {
 
     const nextGame = createNewGame();
 
-    await saveData([nextGame], 0);
     setShowSettings(true);
     resetRoundForm();
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    scrollToTop();
+
+    await saveData([nextGame], 0);
   }
 
   async function handleClearRounds() {
     if (!confirm("현재 게임의 라운드 이력을 모두 삭제할까?")) return;
 
+    resetRoundForm();
+
     await updateCurrentGame({
       ...currentGame,
       rounds: [],
     });
-
-    resetRoundForm();
   }
 
   async function handleUndoLastRound() {
     if (!currentGame.rounds?.length) return;
 
+    resetRoundForm();
+
     await updateCurrentGame({
       ...currentGame,
       rounds: currentGame.rounds.slice(0, -1),
     });
-
-    resetRoundForm();
   }
 
   function handleWinnerChange(nextWinnerId) {
@@ -836,10 +865,11 @@ function App() {
   }
 
   async function handleSelectGame(gameIndex) {
-    await saveData(games, gameIndex);
     resetRoundForm();
     setShowSettings(false);
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    scrollToTop();
+
+    await saveData(games, gameIndex);
   }
 
   async function handleSaveRound() {
@@ -847,22 +877,22 @@ function App() {
       alert("1등을 선택해야 해.");
       return;
     }
-  
+
     if (!roundMode) {
       alert("종료방식을 선택해야 해.");
       return;
     }
-  
+
     if (roundMode === "thankyou" && !bustTargetId) {
       alert("땡큐박 대상을 선택해야 해.");
       return;
     }
-  
+
     if (roundMode === "hand-stop" && !handType) {
       alert("족보 종류를 선택해야 해.");
       return;
     }
-  
+
     const preview = calculateRoundScores({
       activePlayerIds,
       winnerId,
@@ -871,10 +901,10 @@ function App() {
       handType,
       bustTargetId,
     });
-  
+
     const roundNumber = (currentGame.rounds || []).length + 1;
     const mode = getRoundMode(roundMode);
-  
+
     const newRound = {
       id: `round-${Date.now()}`,
       roundNumber,
@@ -889,28 +919,19 @@ function App() {
       details: preview.details,
       modeDescription: getSelectedModeDescription(roundMode, handType, bustTargetId),
     };
-  
+
     const nextGame = {
       ...currentGame,
       rounds: [...(currentGame.rounds || []), newRound],
     };
-  
+
     const nextGames = games.map((game, index) =>
       index === currentGameIndex ? normalizeGame(nextGame) : game
     );
-  
+
     resetRoundForm();
-  
-    window.scrollTo(0, 0);
-    document.documentElement.scrollTop = 0;
-    document.body.scrollTop = 0;
-  
-    requestAnimationFrame(() => {
-      window.scrollTo(0, 0);
-      document.documentElement.scrollTop = 0;
-      document.body.scrollTop = 0;
-    });
-  
+    scrollToTop();
+
     await saveData(nextGames, currentGameIndex);
   }
 
@@ -1115,19 +1136,22 @@ function App() {
             const isUnregistered = isPerfectMode || Boolean(input.isUnregistered);
             const isRankLocked = isUnregistered || isBustTarget;
             const maxRank = activePlayerIds.length;
-            const selectedRank = Number(input.rank || 2);
-            const displayRank = isRankLocked
-              ? maxRank
-              : Math.min(selectedRank, hasAutoLastLoser ? maxRank - 1 : maxRank);
+
             const hasAutoLastLoser = loserPlayers.some((loser) => {
               const loserInput = playerInputs[loser.id] || {};
+
               return (
                 roundMode === "perfect" ||
                 Boolean(loserInput.isUnregistered) ||
                 bustTargetId === loser.id
               );
             });
-            
+
+            const selectedRank = Number(input.rank || 2);
+            const displayRank = isRankLocked
+              ? maxRank
+              : Math.min(selectedRank, hasAutoLastLoser ? maxRank - 1 : maxRank);
+
             const rankOptions = Array.from(
               {
                 length: hasAutoLastLoser
