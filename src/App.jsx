@@ -3,7 +3,7 @@ import { doc, onSnapshot, serverTimestamp, setDoc } from "firebase/firestore";
 import "./App.css";
 import { db } from "./firebase";
 
-const APP_VERSION = "hoola-score-v1";
+const APP_VERSION = "hoola-score-v4";
 
 const DEFAULT_PLAYERS = [
   { id: "p1", name: "재우" },
@@ -15,71 +15,175 @@ const DEFAULT_PLAYERS = [
 
 const DEFAULT_ACTIVE_PLAYER_IDS = ["p1", "p2", "p3", "p4"];
 
+const PLAYER_SORT_ORDER = Object.fromEntries(
+  DEFAULT_PLAYERS.map((player, index) => [player.id, index])
+);
+
 const SCOREBOARD_REF = doc(db, "scoreboards", "family-card-score");
 
 const ROUND_MODES = [
-  { id: "normal", label: "일반훌라" },
-  { id: "thankyou", label: "땡큐훌라" },
-  { id: "perfect", label: "퍼펙트훌라" },
-  { id: "hoolbak", label: "훌박" },
-  { id: "stop", label: "스톱" },
-  { id: "hand", label: "족보 스톱" },
+  { value: "normal", label: "일반훌라", badge: "×1" },
+  { value: "thankyou", label: "땡큐훌라", badge: "독박 ×2" },
+  { value: "perfect", label: "퍼펙트훌라", badge: "×2" },
+  { value: "hoolbak", label: "훌박", badge: "×2" },
+  { value: "stop", label: "스톱", badge: "기본 ×1" },
+  { value: "hand-stop", label: "족보 스톱", badge: "×4~×8" },
 ];
 
 const HAND_TYPES = [
-  { id: "straightFlush", label: "스트레이트 플러쉬", multiplier: 8 },
-  { id: "high", label: "하이", multiplier: 4 },
-  { id: "low", label: "로우", multiplier: 4 },
-  { id: "sevenFourCard", label: "세븐 포카드", multiplier: 4 },
+  {
+    value: "straight-flush",
+    label: "스트레이트 플러쉬",
+    multiplier: 8,
+    description: "미등록 상태에서 7장이 같은 무늬로 연속 숫자인 경우",
+  },
+  {
+    value: "high",
+    label: "하이",
+    multiplier: 4,
+    description: "미등록 상태에서 7장 카드 합이 80 이상인 경우",
+  },
+  {
+    value: "low",
+    label: "로우",
+    multiplier: 4,
+    description: "미등록 상태에서 7장 카드 합이 15 이하인 경우",
+  },
+  {
+    value: "seven-four-card",
+    label: "세븐 포카드",
+    multiplier: 4,
+    description: "손패에 7 카드가 4장 있는 경우",
+  },
 ];
 
-const STACK_OPTIONS = [
-  { value: 0, label: "기본 = ×1" },
-  { value: 1, label: "1배 = ×2" },
-  { value: 2, label: "2배 = ×4" },
-  { value: 3, label: "3배 = ×8" },
-  { value: 4, label: "4배 = ×16" },
-  { value: 5, label: "5배 = ×32" },
-  { value: 6, label: "6배 = ×64" },
-  { value: 7, label: "7배 = ×128" },
-  { value: 8, label: "8배 = ×256" },
-];
+function createDefaultPlayerNames() {
+  return Object.fromEntries(DEFAULT_PLAYERS.map((player) => [player.id, player.name]));
+}
 
-const SEVEN_OPTIONS = [0, 1, 2, 3, 4];
+function createNewGame() {
+  return {
+    id: `game-${Date.now()}`,
+    title: `게임 ${new Date().toLocaleString("ko-KR", {
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    })}`,
+    createdAt: new Date().toISOString(),
+    playerNames: createDefaultPlayerNames(),
+    activePlayerIds: DEFAULT_ACTIVE_PLAYER_IDS,
+    rounds: [],
+  };
+}
 
-function getMultiplierFromStack(stackCount) {
-  return 2 ** Number(stackCount || 0);
+function normalizeGame(game) {
+  const playerNames = {
+    ...createDefaultPlayerNames(),
+    ...(game?.playerNames || {}),
+  };
+
+  const activePlayerIds =
+    Array.isArray(game?.activePlayerIds) && game.activePlayerIds.length >= 2
+      ? game.activePlayerIds.filter((id) => playerNames[id])
+      : DEFAULT_ACTIVE_PLAYER_IDS;
+
+  return {
+    ...game,
+    id: game?.id || `game-${Date.now()}`,
+    title: game?.title || "게임",
+    createdAt: game?.createdAt || new Date().toISOString(),
+    playerNames,
+    activePlayerIds,
+    rounds: Array.isArray(game?.rounds) ? game.rounds : [],
+  };
+}
+
+function normalizeGames(games) {
+  if (!Array.isArray(games) || games.length === 0) {
+    return [createNewGame()];
+  }
+
+  return games.map(normalizeGame);
+}
+
+function getPlayerName(playerNames, playerId) {
+  return (
+    playerNames?.[playerId] ||
+    DEFAULT_PLAYERS.find((player) => player.id === playerId)?.name ||
+    playerId
+  );
+}
+
+function getPlayerBaseOrder(playerId) {
+  return PLAYER_SORT_ORDER[playerId] ?? 999;
+}
+
+function getRankBaseScore(rank) {
+  return -(Number(rank) - 1);
 }
 
 function getSevenMultiplier(sevenCount) {
   return 2 ** Number(sevenCount || 0);
 }
 
-function getRankBaseScore(rank) {
-  const numberRank = Number(rank);
-
-  if (numberRank <= 1) return 0;
-
-  return -(numberRank - 1);
+function getHandType(handType) {
+  return HAND_TYPES.find((item) => item.value === handType);
 }
 
-function getRoundModeLabel(mode) {
-  return ROUND_MODES.find((item) => item.id === mode)?.label || "일반훌라";
+function getRoundMode(roundMode) {
+  return ROUND_MODES.find((item) => item.value === roundMode);
 }
 
-function getHandTypeLabel(handType) {
-  return HAND_TYPES.find((item) => item.id === handType)?.label || "";
-}
-
-function getRoundMultiplier(roundMode, handType) {
-  if (roundMode === "perfect") return 4;
+function getRoundModeMultiplier(roundMode, handType) {
+  if (roundMode === "perfect") return 2;
   if (roundMode === "hoolbak") return 2;
 
-  if (roundMode === "hand") {
-    return HAND_TYPES.find((item) => item.id === handType)?.multiplier || 1;
+  if (roundMode === "hand-stop") {
+    return getHandType(handType)?.multiplier || 1;
   }
 
   return 1;
+}
+
+function getSelectedModeDescription(roundMode, handType, bustTargetId) {
+  if (!roundMode) {
+    return "종료방식을 선택하면 적용 배수가 표시돼.";
+  }
+
+  if (roundMode === "normal") {
+    return "일반훌라: 추가 종료 배수 없음 ×1";
+  }
+
+  if (roundMode === "thankyou") {
+    return bustTargetId
+      ? "땡큐훌라: 땡큐박 대상 자동 꼴등 + 전체 패자점수 독박 ×2"
+      : "땡큐훌라: 땡큐박 대상 독박 ×2";
+  }
+
+  if (roundMode === "perfect") {
+    return "퍼펙트훌라: 패자 전원 퍼펙트 ×2 + 자동 미등록 ×2";
+  }
+
+  if (roundMode === "hoolbak") {
+    return "훌박: 패자 전원 훌박 ×2";
+  }
+
+  if (roundMode === "stop") {
+    return bustTargetId
+      ? "스톱박 적용: 대상자 자동 꼴등 + 전체 패자점수 독박 ×2"
+      : "스톱: 기본 ×1 / 스톱박 발생 시 대상자 독박 ×2";
+  }
+
+  if (roundMode === "hand-stop") {
+    const hand = getHandType(handType);
+
+    return hand
+      ? `족보 스톱: ${hand.label} ×${hand.multiplier}`
+      : "족보 스톱: 족보를 선택하면 배수가 적용돼.";
+  }
+
+  return "";
 }
 
 function formatScore(score) {
@@ -87,1043 +191,1185 @@ function formatScore(score) {
   return `${score}`;
 }
 
-function createNewGame(gameNumber = 1, players = DEFAULT_PLAYERS, activePlayerIds = DEFAULT_ACTIVE_PLAYER_IDS) {
-  return {
-    id: Date.now(),
-    version: APP_VERSION,
-    gameNumber,
-    createdAt: new Date().toLocaleString(),
-    players,
-    activePlayerIds,
-    rounds: [],
-  };
-}
+function createDefaultPlayerInputs(activePlayerIds, winnerId) {
+  if (!winnerId) return {};
 
-function normalizeGame(game, index) {
-  if (!game || game.version !== APP_VERSION || !Array.isArray(game.players)) {
-    return createNewGame(index + 1);
-  }
-
-  const normalizedPlayers = DEFAULT_PLAYERS.map((defaultPlayer) => {
-    const savedPlayer = game.players.find((player) => player.id === defaultPlayer.id);
-
-    return {
-      ...defaultPlayer,
-      name: savedPlayer?.name || defaultPlayer.name,
-    };
-  });
-
-  const normalizedActivePlayerIds = Array.isArray(game.activePlayerIds)
-    ? game.activePlayerIds.filter((id) =>
-        normalizedPlayers.some((player) => player.id === id)
-      )
-    : DEFAULT_ACTIVE_PLAYER_IDS;
-
-  return {
-    ...game,
-    version: APP_VERSION,
-    gameNumber: game.gameNumber || index + 1,
-    players: normalizedPlayers,
-    activePlayerIds:
-      normalizedActivePlayerIds.length >= 2
-        ? normalizedActivePlayerIds
-        : DEFAULT_ACTIVE_PLAYER_IDS,
-    rounds: Array.isArray(game.rounds) ? game.rounds : [],
-  };
-}
-
-function createDefaultPlayerInputs(activePlayerIds = DEFAULT_ACTIVE_PLAYER_IDS) {
   const inputs = {};
-  const maxRank = activePlayerIds.length;
+  const loserIds = activePlayerIds.filter((id) => id !== winnerId);
 
-  activePlayerIds.forEach((playerId, index) => {
+  loserIds.forEach((playerId, index) => {
     inputs[playerId] = {
-      rank: Math.min(index + 2, maxRank),
-      registered: true,
+      rank: index + 2,
+      isUnregistered: false,
       sevenCount: 0,
-      personalStack: 0,
     };
   });
 
   return inputs;
 }
 
-function StackSelect({ value, onChange }) {
+function normalizePlayerInputs(previousInputs, activePlayerIds, winnerId) {
+  if (!winnerId) return {};
+
+  const nextInputs = {};
+  const loserIds = activePlayerIds.filter((id) => id !== winnerId);
+
+  loserIds.forEach((playerId, index) => {
+    nextInputs[playerId] = {
+      rank: index + 2,
+      isUnregistered: false,
+      sevenCount: 0,
+      ...(previousInputs?.[playerId] || {}),
+    };
+  });
+
+  return nextInputs;
+}
+
+function getRoundResultRank(playerId, winnerId, details = []) {
+  if (playerId === winnerId) return 1;
+
+  const detail = details.find((item) => item.playerId === playerId);
+
+  return Number(detail?.rank || 99);
+}
+
+function sortPlayersForRoundResult(players, winnerId, details = []) {
+  return [...players].sort((a, b) => {
+    const rankA = getRoundResultRank(a.id, winnerId, details);
+    const rankB = getRoundResultRank(b.id, winnerId, details);
+
+    if (rankA !== rankB) return rankA - rankB;
+
+    return getPlayerBaseOrder(a.id) - getPlayerBaseOrder(b.id);
+  });
+}
+
+function sortScoreEntriesForRoundResult(scoreEntries, winnerId, details = []) {
+  return [...scoreEntries].sort(([playerIdA], [playerIdB]) => {
+    const rankA = getRoundResultRank(playerIdA, winnerId, details);
+    const rankB = getRoundResultRank(playerIdB, winnerId, details);
+
+    if (rankA !== rankB) return rankA - rankB;
+
+    return getPlayerBaseOrder(playerIdA) - getPlayerBaseOrder(playerIdB);
+  });
+}
+
+function calculateRoundScores({
+  activePlayerIds,
+  winnerId,
+  playerInputs,
+  roundMode,
+  handType,
+  bustTargetId,
+}) {
+  const scores = Object.fromEntries(activePlayerIds.map((playerId) => [playerId, 0]));
+  const loserIds = activePlayerIds.filter((playerId) => playerId !== winnerId);
+  const maxRank = activePlayerIds.length;
+  const roundMultiplier = getRoundModeMultiplier(roundMode, handType);
+  const isBustRound = ["thankyou", "stop"].includes(roundMode) && Boolean(bustTargetId);
+
+  const details = loserIds.map((playerId) => {
+    const input = playerInputs[playerId] || {};
+    const isBustTarget = isBustRound && playerId === bustTargetId;
+    const isPerfectMode = roundMode === "perfect";
+    const isUnregistered = isPerfectMode || Boolean(input.isUnregistered);
+    const rank = isUnregistered || isBustTarget ? maxRank : Number(input.rank || 2);
+    const baseScore = getRankBaseScore(rank);
+    const sevenCount = Number(input.sevenCount || 0);
+    const sevenMultiplier = getSevenMultiplier(sevenCount);
+
+    let multiplier = roundMultiplier;
+    const multiplierLabels = [];
+
+    if (roundMode === "perfect") {
+      multiplierLabels.push("퍼펙트 ×2");
+    }
+
+    if (roundMode === "hoolbak") {
+      multiplierLabels.push("훌박 ×2");
+    }
+
+    if (roundMode === "hand-stop") {
+      const hand = getHandType(handType);
+      if (hand) {
+        multiplierLabels.push(`${hand.label} ×${hand.multiplier}`);
+      }
+    }
+
+    if (isUnregistered) {
+      multiplier *= 2;
+      multiplierLabels.push("미등록 ×2");
+    }
+
+    if (sevenCount > 0) {
+      multiplier *= sevenMultiplier;
+      multiplierLabels.push(`7 ${sevenCount}장 ×${sevenMultiplier}`);
+    }
+
+    const rawScore = baseScore * multiplier;
+
+    return {
+      playerId,
+      rank,
+      baseScore,
+      multiplier,
+      multiplierLabels,
+      rawScore,
+      finalScore: rawScore,
+      isUnregistered,
+      sevenCount,
+      isBustTarget,
+    };
+  });
+
+  if (isBustRound) {
+    const loserTotal = details.reduce((sum, detail) => sum + detail.rawScore, 0);
+    const bustScore = loserTotal * 2;
+
+    details.forEach((detail) => {
+      if (detail.playerId === bustTargetId) {
+        detail.finalScore = bustScore;
+        detail.multiplierLabels = [...detail.multiplierLabels, "독박 ×2"];
+      } else {
+        detail.finalScore = 0;
+      }
+
+      scores[detail.playerId] = detail.finalScore;
+    });
+
+    scores[winnerId] = -bustScore;
+
+    return {
+      scores,
+      details,
+      winnerScore: scores[winnerId],
+      loserTotal,
+      isBustRound: true,
+    };
+  }
+
+  const loserTotal = details.reduce((sum, detail) => sum + detail.rawScore, 0);
+
+  details.forEach((detail) => {
+    scores[detail.playerId] = detail.rawScore;
+  });
+
+  scores[winnerId] = -loserTotal;
+
+  return {
+    scores,
+    details,
+    winnerScore: scores[winnerId],
+    loserTotal,
+    isBustRound: false,
+  };
+}
+
+function calculateGameTotalScores(game) {
+  const activePlayerIds = game.activePlayerIds || DEFAULT_ACTIVE_PLAYER_IDS;
+  const scores = Object.fromEntries(activePlayerIds.map((playerId) => [playerId, 0]));
+
+  (game.rounds || []).forEach((round) => {
+    Object.entries(round.scores || {}).forEach(([playerId, score]) => {
+      scores[playerId] = (scores[playerId] || 0) + Number(score || 0);
+    });
+  });
+
+  return scores;
+}
+
+function RuleBookModal({ onClose }) {
   return (
-    <select value={value} onChange={(event) => onChange(Number(event.target.value))}>
-      {STACK_OPTIONS.map((option) => (
-        <option key={option.value} value={option.value}>
-          {option.label}
-        </option>
-      ))}
-    </select>
+    <div className="rules-modal-backdrop" role="dialog" aria-modal="true">
+      <div className="rules-modal">
+        <div className="rules-modal-header">
+          <div>
+            <h2>우리집 전용 훌라 규칙 설명집</h2>
+            <p>헷갈리는 규칙만 펼쳐서 확인할 수 있어.</p>
+          </div>
+          <button type="button" className="small-button" onClick={onClose}>
+            닫기
+          </button>
+        </div>
+
+        <div className="rules-accordion">
+          <details open>
+            <summary>기본 진행</summary>
+            <div className="rule-content">
+              <p>일반 트럼프 52장을 사용하고 조커는 사용하지 않는다.</p>
+              <p>참가 인원은 2명부터 5명까지 가능하다.</p>
+              <p>첫 번째 플레이어는 8장, 나머지 플레이어는 7장을 받는다.</p>
+              <p>첫판 첫 번째 플레이어는 가위바위보로 정한다.</p>
+              <p>이후에는 전판 1등이 다음 판 첫 번째 플레이어가 된다.</p>
+              <p>자기 차례에는 카드 한 장을 가져오고, 등록 또는 붙이기 후 카드 한 장을 버린다.</p>
+            </div>
+          </details>
+
+          <details>
+            <summary>등록과 붙이기</summary>
+            <div className="rule-content">
+              <p>등록은 같은 숫자 3장 이상 또는 같은 무늬 연속 숫자 3장 이상으로 가능하다.</p>
+              <p>예: 7♠ 7♥ 7♦처럼 같은 숫자 3장 이상이면 등록 가능하다.</p>
+              <p>예: 5♣ 6♣ 7♣처럼 같은 무늬로 숫자가 이어지면 등록 가능하다.</p>
+              <p>A는 연속 숫자 조합에서 자유롭게 연결 가능하다.</p>
+              <p>예: A-2-3, Q-K-A, K-A-2 같은 식으로 사용할 수 있다.</p>
+              <p>미등록 상태에서는 다른 사람이 등록한 카드에 붙일 수 없다.</p>
+            </div>
+          </details>
+
+          <details>
+            <summary>기본 점수와 등수</summary>
+            <div className="rule-content">
+              <p>1등은 점수를 잃지 않고, 패자들의 마이너스 합계를 플러스로 가져간다.</p>
+              <p>2등은 -1점, 3등은 -2점, 4등은 -3점, 5등은 -4점이다.</p>
+              <p>공동 등수도 가능하다.</p>
+              <p>예: 공동 3등이 2명이면 두 사람 모두 3등 기본 점수인 -2점을 적용한다.</p>
+              <p>미등록자가 여러 명이면 공동 꼴등으로 처리한다.</p>
+            </div>
+          </details>
+
+          <details>
+            <summary>미등록</summary>
+            <div className="rule-content">
+              <p>게임 종료 시 아직 등록하지 못한 사람은 미등록으로 처리한다.</p>
+              <p>차례가 오지 않았더라도 게임이 끝났을 때 등록하지 못했다면 미등록이다.</p>
+              <p>미등록자는 등록자보다 후순위이며 자동 꼴등이다.</p>
+              <p>미등록자는 기본 점수에 미등록 ×2배가 적용된다.</p>
+              <p>예: 4인 게임에서 미등록이면 4등 -3점에 ×2가 적용되어 -6점이다.</p>
+            </div>
+          </details>
+
+          <details>
+            <summary>7 보유</summary>
+            <div className="rule-content">
+              <p>게임 종료 시 손패에 7 카드가 있으면 7 보유 배수가 적용된다.</p>
+              <p>7 보유 1장은 ×2, 2장은 ×4, 3장은 ×8, 4장은 ×16이다.</p>
+              <p>미등록, 훌박, 퍼펙트훌라, 족보 배수와 중복 적용된다.</p>
+              <p>예: 4등 -3점, 미등록 ×2, 7 보유 1장 ×2라면 -3 ×2 ×2 = -12점이다.</p>
+            </div>
+          </details>
+
+          <details>
+            <summary>일반훌라</summary>
+            <div className="rule-content">
+              <p>본인 차례에 손패를 모두 없애면 일반훌라로 종료된다.</p>
+              <p>추가 종료 배수는 없다.</p>
+              <p>패자들은 입력한 등수, 미등록 여부, 7 보유 장수에 따라 점수가 계산된다.</p>
+            </div>
+          </details>
+
+          <details>
+            <summary>땡큐훌라 / 땡큐박</summary>
+            <div className="rule-content">
+              <p>땡큐훌라는 다른 사람이 버린 카드를 받아 바로 훌라하는 경우다.</p>
+              <p>카드를 버린 사람은 반드시 땡큐박 대상이 된다.</p>
+              <p>땡큐박 대상자는 자동 꼴등 처리된다.</p>
+              <p>전체 패자 점수를 먼저 계산한 뒤, 그 합계의 2배를 땡큐박 대상자가 혼자 부담한다.</p>
+              <p>독박 대상자가 아닌 다른 패자는 최종 0점 처리된다.</p>
+              <p>예: 패자 원래 합계가 -6점이면 땡큐박 대상자는 -12점, 다른 패자는 0점이다.</p>
+            </div>
+          </details>
+
+          <details>
+            <summary>훌박</summary>
+            <div className="rule-content">
+              <p>훌박은 특정 플레이어가 미등록 상태에서 한 턴에 패를 모두 없앤 경우다.</p>
+              <p>훌박은 독박이 아니라 패자 전원에게 적용되는 종료 배수다.</p>
+              <p>패자 전원에게 훌박 ×2가 적용된다.</p>
+              <p>패자가 미등록이면 미등록 ×2도 함께 적용된다.</p>
+              <p>패자가 7을 가지고 있으면 7 보유 배수도 함께 적용된다.</p>
+            </div>
+          </details>
+
+          <details>
+            <summary>퍼펙트훌라</summary>
+            <div className="rule-content">
+              <p>퍼펙트훌라는 전체 플레이어가 미등록 상태일 때, 본인이 자신의 패만으로 훌라한 경우다.</p>
+              <p>땡큐훌라는 퍼펙트훌라로 인정하지 않는다.</p>
+              <p>패자 전원에게 퍼펙트 ×2가 적용된다.</p>
+              <p>퍼펙트훌라에서는 패자 전원이 자동 미등록이므로 미등록 ×2도 함께 적용된다.</p>
+              <p>즉, 기본적으로 패자에게 퍼펙트 ×2와 미등록 ×2가 같이 적용된다.</p>
+            </div>
+          </details>
+
+          <details>
+            <summary>스톱 / 스톱박</summary>
+            <div className="rule-content">
+              <p>스톱은 본인 차례에 선언할 수 있다.</p>
+              <p>성공하면 스톱한 사람이 1등이다.</p>
+              <p>다른 등록자의 패 점수가 스톱한 사람보다 같거나 낮으면 스톱박이 발생한다.</p>
+              <p>미등록자는 스톱박 비교 대상에서 제외한다.</p>
+              <p>스톱박 대상자는 자동 꼴등 처리된다.</p>
+              <p>전체 패자 점수를 먼저 계산한 뒤, 그 합계의 2배를 스톱박 대상자가 혼자 부담한다.</p>
+              <p>독박 대상자가 아닌 다른 패자는 최종 0점 처리된다.</p>
+            </div>
+          </details>
+
+          <details>
+            <summary>족보 스톱</summary>
+            <div className="rule-content">
+              <p>족보 스톱은 본인 차례에 특정 족보를 완성했을 때 선언할 수 있다.</p>
+              <p>스트레이트 플러쉬 ×8: 미등록 상태에서 7장이 같은 무늬로 연속 숫자인 경우다.</p>
+              <p>예: 3♠ 4♠ 5♠ 6♠ 7♠ 8♠ 9♠처럼 같은 무늬로 이어진 7장이다.</p>
+              <p>하이 ×4: 미등록 상태에서 7장 카드 합이 80 이상인 경우다.</p>
+              <p>로우 ×4: 미등록 상태에서 7장 카드 합이 15 이하인 경우다.</p>
+              <p>세븐 포카드 ×4: 손패에 7 카드가 4장 있는 경우다.</p>
+              <p>족보 배수는 미등록, 7 보유 배수와 중복 적용된다.</p>
+            </div>
+          </details>
+
+          <details>
+            <summary>카드 점수</summary>
+            <div className="rule-content">
+              <p>A는 1점이다.</p>
+              <p>2부터 10까지는 숫자 그대로 계산한다.</p>
+              <p>J는 11점, Q는 12점, K는 13점이다.</p>
+              <p>하이와 로우 족보를 판단할 때 이 카드 점수를 기준으로 합계를 계산한다.</p>
+            </div>
+          </details>
+        </div>
+      </div>
+    </div>
   );
 }
 
 function App() {
-  const [games, setGames] = useState(() => [createNewGame(1)]);
+  const [games, setGames] = useState([]);
   const [currentGameIndex, setCurrentGameIndex] = useState(0);
-
   const [isLoading, setIsLoading] = useState(true);
-  const [firebaseError, setFirebaseError] = useState("");
 
-  const [setupPlayers, setSetupPlayers] = useState(DEFAULT_PLAYERS);
-  const [setupActivePlayerIds, setSetupActivePlayerIds] = useState(DEFAULT_ACTIVE_PLAYER_IDS);
-  const [isEditingNames, setIsEditingNames] = useState(false);
+  const currentGame = games[currentGameIndex] || games[0] || createNewGame();
+  const playerNames = currentGame?.playerNames || createDefaultPlayerNames();
+  const activePlayerIds = currentGame?.activePlayerIds || DEFAULT_ACTIVE_PLAYER_IDS;
+
+  const [showSettings, setShowSettings] = useState(true);
+  const [showRules, setShowRules] = useState(false);
+  const [draftPlayerNames, setDraftPlayerNames] = useState(createDefaultPlayerNames());
+  const [draftActivePlayerIds, setDraftActivePlayerIds] = useState(DEFAULT_ACTIVE_PLAYER_IDS);
 
   const [winnerId, setWinnerId] = useState("");
-  const [roundMode, setRoundMode] = useState("normal");
-  const [handType, setHandType] = useState("straightFlush");
+  const [roundMode, setRoundMode] = useState("");
+  const [handType, setHandType] = useState("");
   const [bustTargetId, setBustTargetId] = useState("");
-  const [playerInputs, setPlayerInputs] = useState(() =>
-    createDefaultPlayerInputs(DEFAULT_ACTIVE_PLAYER_IDS)
-  );
-
-  const safeCurrentGameIndex = Math.min(currentGameIndex, games.length - 1);
-  const currentGame = games[safeCurrentGameIndex] || createNewGame(1);
-
-  const currentPlayers = currentGame.players || DEFAULT_PLAYERS;
-  const activePlayerIds = currentGame.activePlayerIds || DEFAULT_ACTIVE_PLAYER_IDS;
+  const [playerInputs, setPlayerInputs] = useState({});
 
   const activePlayers = useMemo(() => {
-    return activePlayerIds
-      .map((id) => currentPlayers.find((player) => player.id === id))
-      .filter(Boolean);
-  }, [activePlayerIds, currentPlayers]);
+    return activePlayerIds.map((playerId) => ({
+      id: playerId,
+      name: getPlayerName(playerNames, playerId),
+    }));
+  }, [activePlayerIds, playerNames]);
+
+  const canShowRoundPreview =
+    Boolean(winnerId) &&
+    Boolean(roundMode) &&
+    !(roundMode === "thankyou" && !bustTargetId) &&
+    !(roundMode === "hand-stop" && !handType);
+
+  const roundPreview = useMemo(() => {
+    if (!canShowRoundPreview) return null;
+
+    return calculateRoundScores({
+      activePlayerIds,
+      winnerId,
+      playerInputs,
+      roundMode,
+      handType,
+      bustTargetId,
+    });
+  }, [activePlayerIds, winnerId, playerInputs, roundMode, handType, bustTargetId, canShowRoundPreview]);
+
+  const totalScores = useMemo(() => {
+    return calculateGameTotalScores(currentGame || createNewGame());
+  }, [currentGame]);
 
   useEffect(() => {
-    const unsubscribe = onSnapshot(
-      SCOREBOARD_REF,
-      async (snapshot) => {
-        if (!snapshot.exists()) {
-          const initialGame = createNewGame(1);
+    const unsubscribe = onSnapshot(SCOREBOARD_REF, async (snapshot) => {
+      if (!snapshot.exists()) {
+        const initialGame = createNewGame();
 
-          setGames([initialGame]);
-          setCurrentGameIndex(0);
-          setIsLoading(false);
+        setGames([initialGame]);
+        setCurrentGameIndex(0);
+        setIsLoading(false);
 
-          await setDoc(SCOREBOARD_REF, {
+        await setDoc(
+          SCOREBOARD_REF,
+          {
+            appVersion: APP_VERSION,
             games: [initialGame],
             currentGameIndex: 0,
             updatedAt: serverTimestamp(),
-          });
+          },
+          { merge: true }
+        );
 
-          return;
-        }
-
-        const data = snapshot.data();
-        const rawGames = Array.isArray(data.games) && data.games.length > 0
-          ? data.games
-          : [createNewGame(1)];
-
-        const normalizedGames = rawGames.map((game, index) => normalizeGame(game, index));
-        const nextIndex = Number(data.currentGameIndex || 0);
-        const safeIndex = Number.isNaN(nextIndex)
-          ? 0
-          : Math.min(nextIndex, normalizedGames.length - 1);
-
-        setGames(normalizedGames);
-        setCurrentGameIndex(safeIndex);
-        setIsLoading(false);
-        setFirebaseError("");
-
-        if (JSON.stringify(rawGames) !== JSON.stringify(normalizedGames)) {
-          await setDoc(
-            SCOREBOARD_REF,
-            {
-              games: normalizedGames,
-              currentGameIndex: safeIndex,
-              updatedAt: serverTimestamp(),
-            },
-            { merge: true }
-          );
-        }
-      },
-      (error) => {
-        console.error(error);
-        setFirebaseError("Firebase 연결에 실패했습니다. Firestore Rules를 확인해 주세요.");
-        setIsLoading(false);
+        return;
       }
-    );
+
+      const data = snapshot.data();
+      const nextGames = normalizeGames(data.games);
+      const nextIndex =
+        Number.isInteger(data.currentGameIndex) &&
+        data.currentGameIndex >= 0 &&
+        data.currentGameIndex < nextGames.length
+          ? data.currentGameIndex
+          : 0;
+
+      setGames(nextGames);
+      setCurrentGameIndex(nextIndex);
+      setIsLoading(false);
+    });
 
     return () => unsubscribe();
   }, []);
 
   useEffect(() => {
-    setSetupPlayers(currentPlayers);
-    setSetupActivePlayerIds(activePlayerIds);
-    setPlayerInputs(createDefaultPlayerInputs(activePlayerIds));
-    setWinnerId("");
-    setBustTargetId("");
-  }, [currentGame.id]);
+    if (!currentGame) return;
+
+    setDraftPlayerNames({
+      ...createDefaultPlayerNames(),
+      ...(currentGame.playerNames || {}),
+    });
+
+    setDraftActivePlayerIds(
+      Array.isArray(currentGame.activePlayerIds) && currentGame.activePlayerIds.length >= 2
+        ? currentGame.activePlayerIds
+        : DEFAULT_ACTIVE_PLAYER_IDS
+    );
+  }, [currentGame?.id]);
 
   useEffect(() => {
-    if (winnerId === bustTargetId) {
+    if (!winnerId) {
+      setPlayerInputs({});
       setBustTargetId("");
+      return;
     }
-  }, [winnerId, bustTargetId]);
 
-  useEffect(() => {
-    setPlayerInputs((previousInputs) => {
-      const nextInputs = { ...previousInputs };
-
-      activePlayerIds.forEach((playerId, index) => {
-        if (!nextInputs[playerId]) {
-          nextInputs[playerId] = {
-            rank: Math.min(index + 2, activePlayerIds.length),
-            registered: true,
-            sevenCount: 0,
-            personalStack: 0,
-          };
-        }
-      });
-
-      return nextInputs;
-    });
-  }, [activePlayerIds]);
-
-  const currentScores = useMemo(() => {
-    const scores = {};
-
-    activePlayers.forEach((player) => {
-      scores[player.id] = 0;
-    });
-
-    currentGame.rounds.forEach((round) => {
-      Object.entries(round.scores || {}).forEach(([playerId, score]) => {
-        if (scores[playerId] === undefined) {
-          scores[playerId] = 0;
-        }
-
-        scores[playerId] += score;
-      });
-    });
-
-    return scores;
-  }, [activePlayers, currentGame.rounds]);
-
-  const roundPreview = useMemo(() => {
-    return calculateRoundScores();
-  }, [activePlayers, winnerId, roundMode, handType, bustTargetId, playerInputs]);
-
-  async function saveScoreboard(nextGames, nextIndex) {
-    setGames(nextGames);
-    setCurrentGameIndex(nextIndex);
-
-    try {
-      await setDoc(
-        SCOREBOARD_REF,
-        {
-          games: nextGames,
-          currentGameIndex: nextIndex,
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true }
-      );
-
-      setFirebaseError("");
-    } catch (error) {
-      console.error(error);
-      setFirebaseError("저장에 실패했습니다. 인터넷 연결 또는 Firestore Rules를 확인해 주세요.");
-      alert("저장에 실패했습니다. Firebase 설정을 확인해 주세요.");
+    if (!activePlayerIds.includes(winnerId)) {
+      setWinnerId("");
+      setPlayerInputs({});
+      setBustTargetId("");
+      return;
     }
-  }
 
-  function getPlayerName(playerId, players = currentPlayers) {
-    return players.find((player) => player.id === playerId)?.name || playerId;
-  }
-
-  function getPlayerInput(playerId) {
-    return (
-      playerInputs[playerId] || {
-        rank: 2,
-        registered: true,
-        sevenCount: 0,
-        personalStack: 0,
-      }
+    setPlayerInputs((previousInputs) =>
+      normalizePlayerInputs(previousInputs, activePlayerIds, winnerId)
     );
-  }
+  }, [activePlayerIds.join("|"), winnerId]);
 
-  function updatePlayerInput(playerId, changes) {
-    setPlayerInputs((previousInputs) => ({
-      ...previousInputs,
-      [playerId]: {
-        ...getPlayerInput(playerId),
-        ...previousInputs[playerId],
-        ...changes,
+  async function saveData(nextGames, nextCurrentGameIndex = currentGameIndex) {
+    const normalizedGames = normalizeGames(nextGames);
+    const safeIndex = Math.min(
+      Math.max(Number(nextCurrentGameIndex) || 0, 0),
+      normalizedGames.length - 1
+    );
+
+    setGames(normalizedGames);
+    setCurrentGameIndex(safeIndex);
+
+    await setDoc(
+      SCOREBOARD_REF,
+      {
+        appVersion: APP_VERSION,
+        games: normalizedGames,
+        currentGameIndex: safeIndex,
+        updatedAt: serverTimestamp(),
       },
-    }));
+      { merge: true }
+    );
   }
 
-  function calculateRoundScores() {
-    const scores = {};
-    const details = [];
-
-    activePlayers.forEach((player) => {
-      scores[player.id] = 0;
-    });
-
-    if (!winnerId || activePlayers.length < 2) {
-      return { scores, details, hasBust: false, totalWinnerScore: 0 };
-    }
-
-    const maxRank = activePlayers.length;
-    const roundMultiplier = getRoundMultiplier(roundMode, handType);
-    const losers = activePlayers.filter((player) => player.id !== winnerId);
-    const rawLoserScores = {};
-    const canUseBust = roundMode === "thankyou" || roundMode === "stop";
-    const hasBust = canUseBust && Boolean(bustTargetId) && bustTargetId !== winnerId;
-
-    losers.forEach((player) => {
-      const input = getPlayerInput(player.id);
-      const isBustTarget = hasBust && bustTargetId === player.id;
-
-      const effectiveRegistered =
-        roundMode === "perfect" ? false : Boolean(input.registered);
-
-      const effectiveRank =
-        !effectiveRegistered || isBustTarget ? maxRank : Number(input.rank || 2);
-
-      const baseScore = getRankBaseScore(effectiveRank);
-      const personalMultiplier = getMultiplierFromStack(input.personalStack);
-      const unregisteredMultiplier = effectiveRegistered ? 1 : 2;
-      const sevenMultiplier = getSevenMultiplier(input.sevenCount);
-
-      const finalMultiplier =
-        roundMultiplier *
-        personalMultiplier *
-        unregisteredMultiplier *
-        sevenMultiplier;
-
-      const rawScore = baseScore * finalMultiplier;
-      rawLoserScores[player.id] = rawScore;
-
-      details.push({
-        playerId: player.id,
-        name: player.name,
-        rank: effectiveRank,
-        baseScore,
-        registered: effectiveRegistered,
-        sevenCount: Number(input.sevenCount || 0),
-        personalStack: Number(input.personalStack || 0),
-        roundMultiplier,
-        personalMultiplier,
-        unregisteredMultiplier,
-        sevenMultiplier,
-        finalMultiplier,
-        originalScore: rawScore,
-        finalScore: rawScore,
-        isBustTarget,
-      });
-    });
-
-    if (hasBust) {
-      const loserTotal = Object.values(rawLoserScores).reduce(
-        (sum, score) => sum + score,
-        0
-      );
-      const bustScore = loserTotal * 2;
-
-      losers.forEach((player) => {
-        scores[player.id] = player.id === bustTargetId ? bustScore : 0;
-      });
-
-      scores[winnerId] = -bustScore;
-
-      const updatedDetails = details.map((detail) => ({
-        ...detail,
-        finalScore: detail.playerId === bustTargetId ? bustScore : 0,
-      }));
-
-      return {
-        scores,
-        details: updatedDetails,
-        hasBust: true,
-        totalWinnerScore: scores[winnerId],
-      };
-    }
-
-    const loserTotal = Object.values(rawLoserScores).reduce(
-      (sum, score) => sum + score,
-      0
+  async function updateCurrentGame(nextGame) {
+    const nextGames = games.map((game, index) =>
+      index === currentGameIndex ? normalizeGame(nextGame) : game
     );
 
-    losers.forEach((player) => {
-      scores[player.id] = rawLoserScores[player.id];
-    });
-
-    scores[winnerId] = -loserTotal;
-
-    return {
-      scores,
-      details,
-      hasBust: false,
-      totalWinnerScore: scores[winnerId],
-    };
+    await saveData(nextGames, currentGameIndex);
   }
 
   function resetRoundForm() {
     setWinnerId("");
-    setRoundMode("normal");
-    setHandType("straightFlush");
+    setRoundMode("");
+    setHandType("");
     setBustTargetId("");
-    setPlayerInputs(createDefaultPlayerInputs(activePlayerIds));
+    setPlayerInputs({});
   }
 
-  function validateGameSetup(playerIds = setupActivePlayerIds, players = setupPlayers) {
-    if (playerIds.length < 2) {
-      alert("참가자는 최소 2명 이상 선택해야 합니다.");
-      return false;
-    }
-
-    if (playerIds.length > 5) {
-      alert("참가자는 최대 5명까지 선택할 수 있습니다.");
-      return false;
-    }
-
-    const hasEmptyName = playerIds.some((playerId) => {
-      const player = players.find((item) => item.id === playerId);
-      return !player?.name?.trim();
-    });
-
-    if (hasEmptyName) {
-      alert("참가자 이름은 비워둘 수 없습니다.");
-      return false;
-    }
-
-    return true;
-  }
-
-  function startNewGame() {
-    if (!validateGameSetup()) return;
-
-    const confirmed = window.confirm("새로운 게임을 0점부터 시작할까요? 이전 게임 기록은 보관됩니다.");
-
-    if (!confirmed) return;
-
-    const newGame = createNewGame(
-      games.length + 1,
-      setupPlayers,
-      setupActivePlayerIds
-    );
-
-    const updatedGames = [...games, newGame];
-    const nextIndex = updatedGames.length - 1;
-
-    saveScoreboard(updatedGames, nextIndex);
-    resetRoundForm();
-
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  }
-
-  function applyCurrentGameSettings() {
-    if (!validateGameSetup()) return;
-
-    if (currentGame.rounds.length > 0) {
-      const confirmed = window.confirm(
-        "현재 게임에 이미 라운드 이력이 있습니다. 참가자 설정을 변경하면 표시되는 점수가 달라질 수 있습니다. 계속할까요?"
-      );
-
-      if (!confirmed) return;
-    }
-
-    const updatedGames = games.map((game, index) => {
-      if (index !== safeCurrentGameIndex) return game;
-
-      return {
-        ...game,
-        players: setupPlayers,
-        activePlayerIds: setupActivePlayerIds,
-      };
-    });
-
-    saveScoreboard(updatedGames, safeCurrentGameIndex);
-    resetRoundForm();
-    setIsEditingNames(false);
-  }
-
-  function deleteCurrentRoundHistory() {
-    if (currentGame.rounds.length === 0) {
-      alert("삭제할 라운드 이력이 없습니다.");
+  async function handleApplySettings() {
+    if (draftActivePlayerIds.length < 2) {
+      alert("참가자는 최소 2명 이상 선택해야 해.");
       return;
     }
 
-    const confirmed = window.confirm("현재 게임의 라운드 이력과 점수를 모두 삭제할까요?");
+    setShowSettings(false);
 
-    if (!confirmed) return;
+    const nextGame = {
+      ...currentGame,
+      playerNames: draftPlayerNames,
+      activePlayerIds: draftActivePlayerIds,
+    };
 
-    const updatedGames = games.map((game, index) => {
-      if (index !== safeCurrentGameIndex) return game;
-
-      return {
-        ...game,
-        rounds: [],
-      };
-    });
-
-    saveScoreboard(updatedGames, safeCurrentGameIndex);
+    await updateCurrentGame(nextGame);
     resetRoundForm();
+  }
 
+  async function handleCreateNewGame() {
+    const nextGame = createNewGame();
+    const nextGames = [...games, nextGame];
+    const nextIndex = nextGames.length - 1;
+
+    await saveData(nextGames, nextIndex);
+
+    setShowSettings(true);
+    resetRoundForm();
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  function toggleSetupActivePlayer(playerId) {
-    setSetupActivePlayerIds((previousIds) => {
-      if (previousIds.includes(playerId)) {
-        if (previousIds.length <= 2) {
-          alert("참가자는 최소 2명 이상이어야 합니다.");
-          return previousIds;
-        }
+  async function handleDeleteGame(gameIndex) {
+    if (!confirm("이 게임 기록을 삭제할까?")) return;
 
+    if (games.length <= 1) {
+      const nextGame = createNewGame();
+
+      await saveData([nextGame], 0);
+      setShowSettings(true);
+      resetRoundForm();
+      return;
+    }
+
+    const nextGames = games.filter((_, index) => index !== gameIndex);
+
+    let nextIndex = currentGameIndex;
+
+    if (gameIndex === currentGameIndex) {
+      nextIndex = Math.max(0, gameIndex - 1);
+    } else if (gameIndex < currentGameIndex) {
+      nextIndex = currentGameIndex - 1;
+    }
+
+    nextIndex = Math.min(nextIndex, nextGames.length - 1);
+
+    await saveData(nextGames, nextIndex);
+    resetRoundForm();
+  }
+
+  async function handleDeleteAllGames() {
+    if (!confirm("전체 게임 기록을 모두 삭제할까? 이 작업은 되돌릴 수 없어.")) return;
+
+    const nextGame = createNewGame();
+
+    await saveData([nextGame], 0);
+    setShowSettings(true);
+    resetRoundForm();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  async function handleClearRounds() {
+    if (!confirm("현재 게임의 라운드 이력을 모두 삭제할까?")) return;
+
+    await updateCurrentGame({
+      ...currentGame,
+      rounds: [],
+    });
+
+    resetRoundForm();
+  }
+
+  async function handleUndoLastRound() {
+    if (!currentGame.rounds?.length) return;
+
+    await updateCurrentGame({
+      ...currentGame,
+      rounds: currentGame.rounds.slice(0, -1),
+    });
+
+    resetRoundForm();
+  }
+
+  function handleWinnerChange(nextWinnerId) {
+    setWinnerId(nextWinnerId);
+    setBustTargetId("");
+
+    if (!nextWinnerId) {
+      setPlayerInputs({});
+      return;
+    }
+
+    setPlayerInputs((previousInputs) =>
+      normalizePlayerInputs(previousInputs, activePlayerIds, nextWinnerId)
+    );
+  }
+
+  function handleRoundModeChange(nextRoundMode) {
+    setRoundMode(nextRoundMode);
+    setBustTargetId("");
+    setHandType("");
+
+    if (!winnerId) {
+      setPlayerInputs({});
+    }
+  }
+
+  function updatePlayerInput(playerId, field, value) {
+    setPlayerInputs((previousInputs) => ({
+      ...previousInputs,
+      [playerId]: {
+        ...(previousInputs[playerId] || {}),
+        [field]: value,
+      },
+    }));
+  }
+
+  function handleToggleActivePlayer(playerId) {
+    setDraftActivePlayerIds((previousIds) => {
+      if (previousIds.includes(playerId)) {
+        if (previousIds.length <= 2) return previousIds;
         return previousIds.filter((id) => id !== playerId);
       }
 
-      if (previousIds.length >= 5) {
-        alert("참가자는 최대 5명까지 선택할 수 있습니다.");
-        return previousIds;
-      }
-
-      return DEFAULT_PLAYERS.map((player) => player.id).filter(
-        (id) => previousIds.includes(id) || id === playerId
+      return [...previousIds, playerId].sort(
+        (a, b) => getPlayerBaseOrder(a) - getPlayerBaseOrder(b)
       );
     });
   }
 
-  function updateSetupPlayerName(playerId, name) {
-    setSetupPlayers((previousPlayers) =>
-      previousPlayers.map((player) =>
-        player.id === playerId ? { ...player, name } : player
-      )
-    );
-  }
-
-  function changeRoundMode(nextMode) {
-    setRoundMode(nextMode);
-    setBustTargetId("");
-
-    if (nextMode !== "hand") {
-      setHandType("straightFlush");
-    }
-
-    if (nextMode === "perfect") {
-      const nextInputs = {};
-
-      activePlayerIds.forEach((playerId, index) => {
-        nextInputs[playerId] = {
-          ...getPlayerInput(playerId),
-          rank: Math.min(index + 2, activePlayerIds.length),
-          registered: false,
-        };
-      });
-
-      setPlayerInputs(nextInputs);
-    }
-  }
-
-  function handleRegisteredChange(playerId, value) {
-    const isRegistered = value === "registered";
-    const maxRank = activePlayers.length;
-
-    updatePlayerInput(playerId, {
-      registered: isRegistered,
-      rank: isRegistered ? Math.min(getPlayerInput(playerId).rank || 2, maxRank) : maxRank,
-    });
-  }
-
-  function saveRound() {
-    if (activePlayers.length < 2) {
-      alert("참가자는 최소 2명 이상이어야 합니다.");
-      return;
-    }
-
-    if (!winnerId) {
-      alert("1등을 선택해 주세요.");
-      return;
-    }
-
-    if (roundMode === "hand" && !handType) {
-      alert("족보 종류를 선택해 주세요.");
-      return;
-    }
-
-    if ((roundMode === "thankyou" || roundMode === "stop") && bustTargetId === winnerId) {
-      alert("독박 대상자는 1등이 될 수 없습니다.");
-      return;
-    }
-
-    const scores = roundPreview.scores;
-
-    const newRound = {
-      roundNumber: currentGame.rounds.length + 1,
-      createdAt: new Date().toLocaleString(),
-      mode: roundMode,
-      modeLabel: getRoundModeLabel(roundMode),
-      handType: roundMode === "hand" ? handType : "",
-      handTypeLabel: roundMode === "hand" ? getHandTypeLabel(handType) : "",
-      winnerId,
-      bustTargetId,
-      hasBust: roundPreview.hasBust,
-      activePlayerIds,
-      playersSnapshot: currentPlayers,
-      inputs: playerInputs,
-      details: roundPreview.details,
-      scores,
-    };
-
-    const updatedGames = games.map((game, index) => {
-      if (index !== safeCurrentGameIndex) return game;
-
-      return {
-        ...game,
-        rounds: [...game.rounds, newRound],
-      };
-    });
-
-    saveScoreboard(updatedGames, safeCurrentGameIndex);
+  async function handleSelectGame(gameIndex) {
+    await saveData(games, gameIndex);
     resetRoundForm();
-
+    setShowSettings(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  function undoLastRound() {
-    if (currentGame.rounds.length === 0) {
-      alert("취소할 라운드가 없습니다.");
+  async function handleSaveRound() {
+    if (!winnerId) {
+      alert("1등을 선택해야 해.");
       return;
     }
 
-    const confirmed = window.confirm("마지막 라운드를 취소할까요?");
+    if (!roundMode) {
+      alert("종료방식을 선택해야 해.");
+      return;
+    }
 
-    if (!confirmed) return;
+    if (roundMode === "thankyou" && !bustTargetId) {
+      alert("땡큐박 대상을 선택해야 해.");
+      return;
+    }
 
-    const updatedGames = games.map((game, index) => {
-      if (index !== safeCurrentGameIndex) return game;
+    if (roundMode === "hand-stop" && !handType) {
+      alert("족보 종류를 선택해야 해.");
+      return;
+    }
 
-      return {
-        ...game,
-        rounds: game.rounds.slice(0, -1),
-      };
+    const preview = calculateRoundScores({
+      activePlayerIds,
+      winnerId,
+      playerInputs,
+      roundMode,
+      handType,
+      bustTargetId,
     });
 
-    saveScoreboard(updatedGames, safeCurrentGameIndex);
-    resetRoundForm();
+    const roundNumber = (currentGame.rounds || []).length + 1;
+    const mode = getRoundMode(roundMode);
 
+    const newRound = {
+      id: `round-${Date.now()}`,
+      roundNumber,
+      createdAt: new Date().toISOString(),
+      winnerId,
+      roundMode,
+      roundModeLabel: mode?.label || "",
+      handType: roundMode === "hand-stop" ? handType : "",
+      handTypeLabel: roundMode === "hand-stop" ? getHandType(handType)?.label || "" : "",
+      bustTargetId,
+      scores: preview.scores,
+      details: preview.details,
+      modeDescription: getSelectedModeDescription(roundMode, handType, bustTargetId),
+    };
+
+    await updateCurrentGame({
+      ...currentGame,
+      rounds: [...(currentGame.rounds || []), newRound],
+    });
+
+    resetRoundForm();
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   if (isLoading) {
     return (
-      <div className="app">
-        <section className="card">
-          <h2>점수판 불러오는 중...</h2>
+      <main className="app-shell">
+        <section className="panel">
+          <p>점수판 불러오는 중...</p>
         </section>
-      </div>
+      </main>
     );
   }
 
-  return (
-    <div className="app">
-      <header className="header">
-        <div>
-          <p className="eyebrow">우리집 훌라</p>
-          <h1>점수 자동계산기</h1>
-        </div>
+  const loserPlayers = winnerId
+    ? activePlayers.filter((player) => player.id !== winnerId)
+    : [];
 
-        <button className="reset-button" onClick={startNewGame}>
-          새로운 게임 시작
-        </button>
+  const selectedModeDescription = getSelectedModeDescription(roundMode, handType, bustTargetId);
+
+  return (
+    <main className="app-shell">
+      {showRules && <RuleBookModal onClose={() => setShowRules(false)} />}
+
+      <header className="app-header">
+        <div>
+          <p className="eyebrow">우리집 전용</p>
+          <h1>훌라 점수 계산기</h1>
+          <p>게임별 기록 저장 · 자동 점수 계산 · 모바일 입력 최적화</p>
+        </div>
       </header>
 
-      {firebaseError && (
-        <section className="card">
-          <p className="empty">{firebaseError}</p>
-        </section>
-      )}
-
-      <section className="card">
-        <div className="section-title">
-          <h2>현재 점수</h2>
-          <span>게임 #{currentGame.gameNumber}</span>
+      <section className="panel">
+        <div className="section-title-row">
+          <div>
+            <h2>현재 점수</h2>
+            <p>{currentGame.title}</p>
+          </div>
+          <button
+            type="button"
+            className="small-button"
+            onClick={() => setShowSettings((value) => !value)}
+          >
+            {showSettings ? "게임 설정 닫기" : "게임 설정 변경"}
+          </button>
         </div>
 
         <div className="score-grid">
           {activePlayers.map((player) => (
-            <div className="score-card" key={player.id}>
-              <div className="player-name">{player.name}</div>
-              <div className="player-score">{currentScores[player.id] || 0}점</div>
+            <div key={player.id} className="score-card">
+              <span>{player.name}</span>
+              <strong
+                className={
+                  totalScores[player.id] > 0
+                    ? "positive"
+                    : totalScores[player.id] < 0
+                      ? "negative"
+                      : ""
+                }
+              >
+                {formatScore(totalScores[player.id] || 0)}
+              </strong>
             </div>
           ))}
         </div>
+
+        <div className="button-row">
+          <button type="button" className="primary-button" onClick={handleCreateNewGame}>
+            새로운 게임 시작
+          </button>
+        </div>
       </section>
 
-      <section className="card">
-        <div className="section-title">
+      {showSettings && (
+        <section className="panel">
           <h2>게임 설정</h2>
-          <span>{setupActivePlayerIds.length}명 참가</span>
-        </div>
 
-        <div className="game-tabs" style={{ marginBottom: "12px" }}>
-          <button
-            className={isEditingNames ? "active" : ""}
-            onClick={() => setIsEditingNames(!isEditingNames)}
-          >
-            이름 변경
-          </button>
+          <div className="settings-block">
+            <h3>참가자 선택</h3>
+            <div className="toggle-grid">
+              {DEFAULT_PLAYERS.map((player) => (
+                <button
+                  key={player.id}
+                  type="button"
+                  className={
+                    draftActivePlayerIds.includes(player.id)
+                      ? "toggle-button active"
+                      : "toggle-button"
+                  }
+                  onClick={() => handleToggleActivePlayer(player.id)}
+                >
+                  {draftPlayerNames[player.id] || player.name}
+                </button>
+              ))}
+            </div>
+          </div>
 
-          <button onClick={applyCurrentGameSettings}>
-            현재 게임 설정 적용
-          </button>
-
-          <button onClick={deleteCurrentRoundHistory}>
-            라운드 이력 삭제
-          </button>
-        </div>
-
-        <div className="history-list">
-          {setupPlayers.map((player) => (
-            <div className="history-item" key={player.id}>
-              <label
-                style={{
-                  display: "flex",
-                  flexDirection: "row",
-                  alignItems: "center",
-                  gap: "10px",
-                  marginBottom: isEditingNames ? "10px" : 0,
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={setupActivePlayerIds.includes(player.id)}
-                  onChange={() => toggleSetupActivePlayer(player.id)}
-                  style={{ width: "18px", height: "18px" }}
-                />
-                참가
-              </label>
-
-              {isEditingNames ? (
-                <label>
-                  {player.id.replace("p", "")}번 이름
+          <div className="settings-block">
+            <h3>이름 변경</h3>
+            <div className="name-grid">
+              {DEFAULT_PLAYERS.map((player) => (
+                <label key={player.id}>
+                  <span>{player.name}</span>
                   <input
-                    value={player.name}
+                    value={draftPlayerNames[player.id] || ""}
                     onChange={(event) =>
-                      updateSetupPlayerName(player.id, event.target.value)
+                      setDraftPlayerNames((previousNames) => ({
+                        ...previousNames,
+                        [player.id]: event.target.value,
+                      }))
                     }
                   />
                 </label>
-              ) : (
-                <div className="history-head" style={{ marginBottom: 0 }}>
-                  <strong>{player.name}</strong>
-                  <span>
-                    {setupActivePlayerIds.includes(player.id) ? "참가" : "미참여"}
-                  </span>
-                </div>
-              )}
+              ))}
             </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="card">
-        <div className="section-title">
-          <h2>이번 라운드 결과</h2>
-          <span>훌라 규칙 v1.0</span>
-        </div>
-
-        <div className="round-form">
-          <div className="form-row">
-            <label>
-              1등
-              <select
-                value={winnerId}
-                onChange={(event) => {
-                  setWinnerId(event.target.value);
-                  if (event.target.value === bustTargetId) {
-                    setBustTargetId("");
-                  }
-                }}
-              >
-                <option value="">선택</option>
-                {activePlayers.map((player) => (
-                  <option key={player.id} value={player.id}>
-                    {player.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label>
-              종료 방식
-              <select
-                value={roundMode}
-                onChange={(event) => changeRoundMode(event.target.value)}
-              >
-                {ROUND_MODES.map((mode) => (
-                  <option key={mode.id} value={mode.id}>
-                    {mode.label}
-                  </option>
-                ))}
-              </select>
-            </label>
           </div>
 
-          <div className="game-tabs">
-            {ROUND_MODES.map((mode) => (
+          <div className="button-row">
+            <button type="button" className="primary-button" onClick={handleApplySettings}>
+              현재 게임 설정 적용
+            </button>
+          </div>
+        </section>
+      )}
+
+      <section className="panel">
+        <h2>이번 라운드 입력</h2>
+
+        <div className="choice-section">
+          <h3>1등 선택</h3>
+          <div className="winner-button-grid">
+            {activePlayers.map((player) => (
               <button
-                key={mode.id}
-                className={roundMode === mode.id ? "active" : ""}
-                onClick={() => changeRoundMode(mode.id)}
+                key={player.id}
+                type="button"
+                className={winnerId === player.id ? "choice-button active" : "choice-button"}
+                onClick={() => handleWinnerChange(winnerId === player.id ? "" : player.id)}
               >
-                {mode.label}
+                {player.name}
               </button>
             ))}
           </div>
-
-          {roundMode === "hand" && (
-            <div className="form-row">
-              <label>
-                족보 종류
-                <select
-                  value={handType}
-                  onChange={(event) => setHandType(event.target.value)}
-                >
-                  {HAND_TYPES.map((type) => (
-                    <option key={type.id} value={type.id}>
-                      {type.label} ×{type.multiplier}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label>
-                족보 배수
-                <input
-                  value={`×${getRoundMultiplier(roundMode, handType)}`}
-                  readOnly
-                />
-              </label>
-            </div>
-          )}
-
-          {(roundMode === "thankyou" || roundMode === "stop") && (
-            <p className="empty">
-              {roundMode === "thankyou"
-                ? "땡큐박 대상자가 있으면 아래 패자 카드에서 선택하세요."
-                : "스톱박이 발생했으면 아래 패자 카드에서 대상자를 선택하세요."}
-            </p>
-          )}
-
-          {winnerId && (
-            <div className="history-list">
-              {activePlayers
-                .filter((player) => player.id !== winnerId)
-                .map((player) => {
-                  const input = getPlayerInput(player.id);
-                  const isPerfect = roundMode === "perfect";
-                  const effectiveRegistered = isPerfect ? false : input.registered;
-                  const isBustTarget = bustTargetId === player.id;
-                  const effectiveRank =
-                    !effectiveRegistered || isBustTarget
-                      ? activePlayers.length
-                      : input.rank;
-
-                  const previewDetail = roundPreview.details.find(
-                    (detail) => detail.playerId === player.id
-                  );
-
-                  return (
-                    <div className="history-item" key={player.id}>
-                      <div className="history-head">
-                        <strong>{player.name}</strong>
-                        <span>
-                          이번 점수 {formatScore(previewDetail?.finalScore || 0)}
-                        </span>
-                      </div>
-
-                      <div className="form-row">
-                        <label>
-                          등수
-                          <select
-                            value={effectiveRank}
-                            disabled={!effectiveRegistered || isBustTarget}
-                            onChange={(event) =>
-                              updatePlayerInput(player.id, {
-                                rank: Number(event.target.value),
-                              })
-                            }
-                          >
-                            {Array.from(
-                              { length: activePlayers.length - 1 },
-                              (_, index) => index + 2
-                            ).map((rank) => (
-                              <option key={rank} value={rank}>
-                                {rank}등
-                              </option>
-                            ))}
-                          </select>
-                          {(!effectiveRegistered || isBustTarget) && (
-                            <small>
-                              {!effectiveRegistered
-                                ? "미등록자는 자동 꼴등 처리"
-                                : "독박 대상자는 자동 꼴등 처리"}
-                            </small>
-                          )}
-                        </label>
-
-                        <label>
-                          등록 상태
-                          <select
-                            value={effectiveRegistered ? "registered" : "unregistered"}
-                            disabled={isPerfect}
-                            onChange={(event) =>
-                              handleRegisteredChange(player.id, event.target.value)
-                            }
-                          >
-                            <option value="registered">등록</option>
-                            <option value="unregistered">미등록</option>
-                          </select>
-                          {isPerfect && <small>퍼펙트훌라는 미등록 자동 적용</small>}
-                        </label>
-                      </div>
-
-                      <div className="form-row">
-                        <label>
-                          7 보유
-                          <select
-                            value={input.sevenCount}
-                            onChange={(event) =>
-                              updatePlayerInput(player.id, {
-                                sevenCount: Number(event.target.value),
-                              })
-                            }
-                          >
-                            {SEVEN_OPTIONS.map((count) => (
-                              <option key={count} value={count}>
-                                {count}장 = ×{getSevenMultiplier(count)}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-
-                        <label>
-                          개인 배수
-                          <StackSelect
-                            value={input.personalStack}
-                            onChange={(value) =>
-                              updatePlayerInput(player.id, {
-                                personalStack: value,
-                              })
-                            }
-                          />
-                        </label>
-                      </div>
-
-                      {(roundMode === "thankyou" || roundMode === "stop") && (
-                        <div className="game-tabs">
-                          <button
-                            className={isBustTarget ? "active" : ""}
-                            onClick={() =>
-                              setBustTargetId(isBustTarget ? "" : player.id)
-                            }
-                          >
-                            {roundMode === "thankyou" ? "땡큐박 대상" : "스톱박 대상"}
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-            </div>
-          )}
         </div>
 
-        {winnerId && (
-          <div className="history-item" style={{ marginBottom: "14px" }}>
-            <div className="history-head">
-              <strong>이번 라운드 예상 점수</strong>
-              <span>{roundPreview.hasBust ? "독박 적용" : "일반 계산"}</span>
-            </div>
+        <div className="mode-header">
+          <div>
+            <h3>종료 방식</h3>
+            <p>{selectedModeDescription}</p>
+          </div>
+          <button type="button" className="small-button" onClick={() => setShowRules(true)}>
+            규칙 설명집
+          </button>
+        </div>
 
-            <div className="history-scores">
-              {activePlayers.map((player) => (
-                <span
-                  key={player.id}
-                  className={(roundPreview.scores[player.id] || 0) > 0 ? "plus" : "minus"}
+        <div className="mode-button-grid">
+          {ROUND_MODES.map((mode) => (
+            <button
+              key={mode.value}
+              type="button"
+              className={roundMode === mode.value ? "mode-button active" : "mode-button"}
+              onClick={() => handleRoundModeChange(roundMode === mode.value ? "" : mode.value)}
+            >
+              <span>{mode.label}</span>
+              <strong>{mode.badge}</strong>
+            </button>
+          ))}
+        </div>
+
+        {roundMode === "hand-stop" && (
+          <div className="hand-type-section">
+            <h3>족보 선택</h3>
+            <div className="hand-button-grid">
+              {HAND_TYPES.map((hand) => (
+                <button
+                  key={hand.value}
+                  type="button"
+                  className={handType === hand.value ? "hand-button active" : "hand-button"}
+                  onClick={() => setHandType(handType === hand.value ? "" : hand.value)}
                 >
-                  {player.name} {formatScore(roundPreview.scores[player.id] || 0)}
-                </span>
+                  <span>{hand.label}</span>
+                  <strong>×{hand.multiplier}</strong>
+                  <small>{hand.description}</small>
+                </button>
               ))}
             </div>
           </div>
         )}
 
-        <div className="action-buttons">
-          <button className="primary-button" onClick={saveRound}>
-            라운드 저장
-          </button>
+        {!winnerId && (
+          <p className="helper-text">1등을 선택하면 패자 입력칸이 표시돼.</p>
+        )}
 
-          <button
-            className="secondary-button"
-            onClick={undoLastRound}
-            disabled={currentGame.rounds.length === 0}
-          >
-            마지막 라운드 취소
-          </button>
-        </div>
-      </section>
+        {winnerId && !roundMode && (
+          <p className="helper-text">종료방식을 선택하면 예상점수를 계산할 수 있어.</p>
+        )}
 
-      <section className="card">
-        <div className="section-title">
-          <h2>라운드 이력</h2>
-          <span>{currentGame.rounds.length}판 진행</span>
-        </div>
+        <div className="player-input-list">
+          {loserPlayers.map((player) => {
+            const input = playerInputs[player.id] || {};
+            const isBustSelectable = ["thankyou", "stop"].includes(roundMode);
+            const isBustTarget = bustTargetId === player.id;
+            const isPerfectMode = roundMode === "perfect";
+            const isUnregistered = isPerfectMode || Boolean(input.isUnregistered);
+            const isRankLocked = isUnregistered || isBustTarget;
+            const maxRank = activePlayerIds.length;
+            const displayRank = isRankLocked ? maxRank : Number(input.rank || 2);
+            const rankOptions = Array.from(
+              { length: activePlayerIds.length - 1 },
+              (_, index) => index + 2
+            );
 
-        {currentGame.rounds.length === 0 ? (
-          <p className="empty">아직 저장된 라운드가 없습니다.</p>
-        ) : (
-          <div className="history-list">
-            {[...currentGame.rounds].reverse().map((round) => (
-              <div className="history-item" key={round.roundNumber}>
-                <div className="history-head">
-                  <strong>{round.roundNumber}라운드</strong>
-                  <span>
-                    {round.modeLabel}
-                    {round.handTypeLabel ? ` / ${round.handTypeLabel}` : ""}
-                    {round.hasBust ? " / 독박" : ""}
+            return (
+              <div key={player.id} className="player-input-card">
+                <div className="player-input-header">
+                  <strong>{player.name}</strong>
+                  <span
+                    className={
+                      isBustTarget || isUnregistered ? "status-badge active" : "status-badge"
+                    }
+                  >
+                    {isBustTarget
+                      ? `${roundMode === "thankyou" ? "땡큐박" : "스톱박"} 대상`
+                      : isUnregistered
+                        ? "미등록 ×2 적용중"
+                        : "등록"}
                   </span>
                 </div>
 
-                <div className="history-scores">
-                  {Object.entries(round.scores || {}).map(([playerId, score]) => (
-                    <span key={playerId} className={score > 0 ? "plus" : "minus"}>
-                      {getPlayerName(playerId, round.playersSnapshot || currentPlayers)}{" "}
-                      {formatScore(score)}
-                    </span>
-                  ))}
+                <div className="rank-section">
+                  <span className="field-label">등수</span>
+                  {isRankLocked ? (
+                    <div className="auto-rank-box">자동 {maxRank}등</div>
+                  ) : (
+                    <div className="rank-button-grid">
+                      {rankOptions.map((rank) => (
+                        <button
+                          key={rank}
+                          type="button"
+                          className={displayRank === rank ? "choice-button active" : "choice-button"}
+                          onClick={() => updatePlayerInput(player.id, "rank", rank)}
+                        >
+                          {rank}등
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="form-grid">
+                  <label>
+                    <span>7 보유</span>
+                    <select
+                      value={Number(input.sevenCount || 0)}
+                      onChange={(event) =>
+                        updatePlayerInput(player.id, "sevenCount", Number(event.target.value))
+                      }
+                    >
+                      {[0, 1, 2, 3, 4].map((count) => (
+                        <option key={count} value={count}>
+                          {count}장 {count > 0 ? `×${2 ** count}` : "×1"}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+
+                <div className="button-row compact">
+                  <button
+                    type="button"
+                    className={isUnregistered ? "toggle-button active" : "toggle-button"}
+                    disabled={isPerfectMode}
+                    onClick={() =>
+                      updatePlayerInput(
+                        player.id,
+                        "isUnregistered",
+                        !Boolean(input.isUnregistered)
+                      )
+                    }
+                  >
+                    {isPerfectMode
+                      ? "자동 미등록 ×2 적용중"
+                      : isUnregistered
+                        ? "미등록 ×2 적용중"
+                        : "미등록이면 선택"}
+                  </button>
+
+                  {isBustSelectable && (
+                    <button
+                      type="button"
+                      className={
+                        isBustTarget
+                          ? "toggle-button active danger-toggle"
+                          : "toggle-button"
+                      }
+                      onClick={() => setBustTargetId(isBustTarget ? "" : player.id)}
+                    >
+                      {roundMode === "thankyou" ? "땡큐박 대상" : "스톱박 대상"}
+                    </button>
+                  )}
                 </div>
               </div>
-            ))}
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="section-title-row">
+          <div>
+            <h2>이번 라운드 예상 점수</h2>
+            <p>{selectedModeDescription}</p>
           </div>
+        </div>
+
+        {!canShowRoundPreview && (
+          <p className="helper-text">
+            1등, 종료방식, 필요한 추가 선택값을 모두 입력하면 예상점수가 표시돼.
+          </p>
+        )}
+
+        {roundPreview && (
+          <>
+            <div className="round-score-list">
+              {sortPlayersForRoundResult(activePlayers, winnerId, roundPreview.details).map(
+                (player) => {
+                  const detail = roundPreview.details.find((item) => item.playerId === player.id);
+                  const score = roundPreview.scores[player.id] || 0;
+
+                  return (
+                    <div key={player.id} className="round-score-row">
+                      <div>
+                        <strong>{player.name}</strong>
+                        <span>
+                          {player.id === winnerId
+                            ? "1등"
+                            : `${detail?.rank || "-"}등${
+                                detail?.multiplierLabels?.length
+                                  ? ` · ${detail.multiplierLabels.join(" · ")}`
+                                  : ""
+                              }`}
+                        </span>
+                      </div>
+                      <strong className={score > 0 ? "positive" : score < 0 ? "negative" : ""}>
+                        {formatScore(score)}
+                      </strong>
+                    </div>
+                  );
+                }
+              )}
+            </div>
+
+            <div className="save-round-area">
+              <button type="button" onClick={handleSaveRound}>
+                라운드 저장
+              </button>
+            </div>
+          </>
         )}
       </section>
 
-      <section className="card">
-        <div className="section-title">
-          <h2>게임 기록</h2>
-          <span>새 게임 이력</span>
+      <section className="panel">
+        <div className="section-title-row">
+          <div>
+            <h2>라운드 이력</h2>
+            <p>최근 라운드가 위에 표시돼.</p>
+          </div>
+          <div className="button-row compact">
+            <button type="button" className="secondary-button" onClick={handleUndoLastRound}>
+              마지막 라운드 취소
+            </button>
+            <button type="button" className="danger-button" onClick={handleClearRounds}>
+              라운드 이력 삭제
+            </button>
+          </div>
         </div>
 
-        <div className="game-tabs">
-          {games.map((game, index) => (
-            <button
-              key={game.id}
-              className={index === safeCurrentGameIndex ? "active" : ""}
-              onClick={() => setCurrentGameIndex(index)}
-            >
-              게임 #{game.gameNumber}
-            </button>
-          ))}
+        {currentGame.rounds?.length ? (
+          <div className="history-list">
+            {[...currentGame.rounds].reverse().map((round) => (
+              <article key={round.id} className="history-card">
+                <div className="history-header">
+                  <strong>{round.roundNumber}라운드</strong>
+                  <span>{round.modeDescription || round.roundModeLabel}</span>
+                </div>
+
+                <p>
+                  1등: {getPlayerName(playerNames, round.winnerId)}
+                  {round.bustTargetId
+                    ? ` / 독박: ${getPlayerName(playerNames, round.bustTargetId)}`
+                    : ""}
+                </p>
+
+                <div className="round-score-list small">
+                  {sortScoreEntriesForRoundResult(
+                    Object.entries(round.scores || {}),
+                    round.winnerId,
+                    round.details || []
+                  ).map(([playerId, score]) => (
+                    <div key={playerId} className="round-score-row">
+                      <span>{getPlayerName(playerNames, playerId)}</span>
+                      <strong className={score > 0 ? "positive" : score < 0 ? "negative" : ""}>
+                        {formatScore(score)}
+                      </strong>
+                    </div>
+                  ))}
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <p className="empty-text">아직 저장된 라운드가 없어.</p>
+        )}
+      </section>
+
+      <section className="panel">
+        <div className="section-title-row">
+          <div>
+            <h2>게임 기록</h2>
+            <p>게임별 점수와 라운드 기록을 관리해.</p>
+          </div>
+          <button type="button" className="danger-button" onClick={handleDeleteAllGames}>
+            전체 게임 삭제
+          </button>
+        </div>
+
+        <div className="history-list">
+          {games.map((game, index) => {
+            const gameScores = calculateGameTotalScores(game);
+            const gameActivePlayers = (game.activePlayerIds || DEFAULT_ACTIVE_PLAYER_IDS).map(
+              (playerId) => ({
+                id: playerId,
+                name: getPlayerName(game.playerNames, playerId),
+              })
+            );
+
+            return (
+              <article
+                key={game.id}
+                className={index === currentGameIndex ? "history-card selected" : "history-card"}
+              >
+                <div className="history-header">
+                  <strong>{game.title}</strong>
+                  <span>{game.rounds?.length || 0}라운드</span>
+                </div>
+
+                <div className="mini-score-grid">
+                  {gameActivePlayers.map((player) => (
+                    <span key={player.id}>
+                      {player.name} {formatScore(gameScores[player.id] || 0)}
+                    </span>
+                  ))}
+                </div>
+
+                <div className="button-row compact">
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => handleSelectGame(index)}
+                  >
+                    이 게임 보기
+                  </button>
+                  <button
+                    type="button"
+                    className="danger-button"
+                    onClick={() => handleDeleteGame(index)}
+                  >
+                    삭제
+                  </button>
+                </div>
+              </article>
+            );
+          })}
         </div>
       </section>
-    </div>
+    </main>
   );
 }
 
