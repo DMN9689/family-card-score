@@ -270,14 +270,17 @@ function calculateRoundScores({
   const roundMultiplier = getRoundModeMultiplier(roundMode, handType);
   const isBustRound = ["thankyou", "stop"].includes(roundMode) && Boolean(bustTargetId);
 
-  const hasAutoLastLoser = loserIds.some((playerId) => {
+  const autoLastCount = loserIds.filter((playerId) => {
     const input = playerInputs[playerId] || {};
+  
     return (
       roundMode === "perfect" ||
       Boolean(input.isUnregistered) ||
       (isBustRound && playerId === bustTargetId)
     );
-  });
+  }).length;
+  
+  const maxSelectableRank = Math.max(2, maxRank - autoLastCount);
 
   const details = loserIds.map((playerId) => {
     const input = playerInputs[playerId] || {};
@@ -287,10 +290,10 @@ function calculateRoundScores({
     const selectedRank = Number(input.rank || 2);
 
     const rank =
-      isUnregistered || isBustTarget
-        ? maxRank
-        : Math.min(selectedRank, hasAutoLastLoser ? maxRank - 1 : maxRank);
-
+    isUnregistered || isBustTarget
+      ? maxRank
+      : Math.min(selectedRank, maxSelectableRank);
+      
     const baseScore = getRankBaseScore(rank);
     const sevenCount = Number(input.sevenCount || 0);
     const sevenMultiplier = getSevenMultiplier(sevenCount);
@@ -1137,27 +1140,25 @@ function App() {
             const isRankLocked = isUnregistered || isBustTarget;
             const maxRank = activePlayerIds.length;
 
-            const hasAutoLastLoser = loserPlayers.some((loser) => {
+            const autoLastCount = loserPlayers.filter((loser) => {
               const loserInput = playerInputs[loser.id] || {};
-
+            
               return (
                 roundMode === "perfect" ||
                 Boolean(loserInput.isUnregistered) ||
                 bustTargetId === loser.id
               );
-            });
-
+            }).length;
+            
+            const maxSelectableRank = Math.max(2, maxRank - autoLastCount);
+            
             const selectedRank = Number(input.rank || 2);
             const displayRank = isRankLocked
               ? maxRank
-              : Math.min(selectedRank, hasAutoLastLoser ? maxRank - 1 : maxRank);
-
+              : Math.min(selectedRank, maxSelectableRank);
+            
             const rankOptions = Array.from(
-              {
-                length: hasAutoLastLoser
-                  ? Math.max(activePlayerIds.length - 2, 1)
-                  : activePlayerIds.length - 1,
-              },
+              { length: maxSelectableRank - 1 },
               (_, index) => index + 2
             );
 
