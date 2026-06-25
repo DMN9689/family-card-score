@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { doc, onSnapshot, serverTimestamp, setDoc } from "firebase/firestore";
 import "./App.css";
 import { db } from "./firebase";
 
 const APP_VERSION = "hoola-score-v5";
+const ACCESS_CODE = "hoola";
+const ACCESS_UNLOCK_STORAGE_KEY = `${APP_VERSION}:access-unlocked`;
 
 const DEFAULT_PLAYERS = [
   { id: "p1", name: "재우" },
@@ -20,6 +22,8 @@ const PLAYER_SORT_ORDER = Object.fromEntries(
 );
 
 const SCOREBOARD_REF = doc(db, "scoreboards", "family-card-score");
+
+let hasAttemptedInitialScoreboardWrite = false;
 
 const ROUND_MODES = [
   { value: "normal", label: "일반훌라", badge: "×1" },
@@ -189,6 +193,24 @@ function getSelectedModeDescription(roundMode, handType, bustTargetId) {
 function formatScore(score) {
   if (score > 0) return `+${score}`;
   return `${score}`;
+}
+
+function getFirebaseErrorMessage(error, actionLabel) {
+  const code = error?.code || "";
+
+  if (code.includes("resource-exhausted")) {
+    return `${actionLabel} 실패: Firebase 무료 사용량이 오늘 한도를 넘었어. 한국시간 오후 4시쯤 리셋된 뒤 다시 시도해줘.`;
+  }
+
+  if (code.includes("permission-denied")) {
+    return `${actionLabel} 실패: Firestore 규칙 권한이 막혀 있어. Firebase 콘솔의 Rules를 확인해줘.`;
+  }
+
+  if (code.includes("unavailable")) {
+    return `${actionLabel} 실패: Firebase 서버나 인터넷 연결이 잠시 불안정해. 잠깐 뒤 다시 시도해줘.`;
+  }
+
+  return `${actionLabel} 실패: ${error?.message || "알 수 없는 Firebase 오류가 발생했어."}`;
 }
 
 function createDefaultPlayerInputs(activePlayerIds, winnerId) {
@@ -557,6 +579,13 @@ function App() {
   const [games, setGames] = useState([]);
   const [currentGameIndex, setCurrentGameIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
+  const [firebaseError, setFirebaseError] = useState("");
+  const isMountedRef = useRef(false);
+  const [isUnlocked, setIsUnlocked] = useState(() => {
+    return localStorage.getItem(ACCESS_UNLOCK_STORAGE_KEY) === "true";
+  });
+  const [accessCodeInput, setAccessCodeInput] = useState("");
+  const [accessError, setAccessError] = useState("");
 
   const currentGame = games[currentGameIndex] || games[0] || createNewGame();
   const playerNames = currentGame?.playerNames || createDefaultPlayerNames();
@@ -604,44 +633,82 @@ function App() {
   }, [currentGame]);
 
   useEffect(() => {
-    const unsubscribe = onSnapshot(SCOREBOARD_REF, async (snapshot) => {
-      if (!snapshot.exists()) {
-        const initialGame = createNewGame();
-
-        setGames([initialGame]);
-        setCurrentGameIndex(0);
-        setIsLoading(false);
-
-        await setDoc(
-          SCOREBOARD_REF,
-          {
-            appVersion: APP_VERSION,
-            games: [initialGame],
-            currentGameIndex: 0,
-            updatedAt: serverTimestamp(),
-          },
-          { merge: true }
-        );
-
-        return;
-      }
-
-      const data = snapshot.data();
-      const nextGames = normalizeGames(data.games);
-      const nextIndex =
-        Number.isInteger(data.currentGameIndex) &&
-        data.currentGameIndex >= 0 &&
-        data.currentGameIndex < nextGames.length
-          ? data.currentGameIndex
-          : 0;
-
-      setGames(nextGames);
-      setCurrentGameIndex(nextIndex);
+    if (!isUnlocked) {
       setIsLoading(false);
-    });
+      return undefined;
+    }
 
-    return () => unsubscribe();
-  }, []);
+    isMountedRef.current = true;
+    setIsLoading(true);
+
+    const unsubscribe = onSnapshot(
+      SCOREBOARD_REF,
+      async (snapshot) => {
+        try {
+          if (!snapshot.exists()) {
+            const initialGame = createNewGame();
+
+            setGames([initialGame]);
+            setCurrentGameIndex(0);
+            setIsLoading(false);
+
+            if (hasAttemptedInitialScoreboardWrite) {
+              return;
+            }
+
+            hasAttemptedInitialScoreboardWrite = true;
+
+            await setDoc(
+              SCOREBOARD_REF,
+              {
+                appVersion: APP_VERSION,
+                games: [initialGame],
+                currentGameIndex: 0,
+                updatedAt: serverTimestamp(),
+              },
+              { merge: true }
+            );
+
+            if (isMountedRef.current) {
+              setFirebaseError("");
+            }
+
+            return;
+          }
+
+          const data = snapshot.data();
+          const nextGames = normalizeGames(data.games);
+          const nextIndex =
+            Number.isInteger(data.currentGameIndex) &&
+            data.currentGameIndex >= 0 &&
+            data.currentGameIndex < nextGames.length
+              ? data.currentGameIndex
+              : 0;
+
+          setGames(nextGames);
+          setCurrentGameIndex(nextIndex);
+          setIsLoading(false);
+          setFirebaseError("");
+        } catch (error) {
+          console.error("Firestore 초기화 실패:", error);
+          setFirebaseError(getFirebaseErrorMessage(error, "공유 점수판 준비"));
+          setIsLoading(false);
+        }
+      },
+      (error) => {
+        console.error("Firestore 구독 실패:", error);
+        setGames((currentGames) => (currentGames.length ? currentGames : [createNewGame()]));
+        setCurrentGameIndex(0);
+        setFirebaseError(getFirebaseErrorMessage(error, "공유 점수판 불러오기"));
+        setIsLoading(false);
+      }
+    );
+
+    return () => {
+      isMountedRef.current = false;
+      unsubscribe();
+    };
+  }, [isUnlocked]);
 
   useEffect(() => {
     if (!currentGame) return;
@@ -687,16 +754,24 @@ function App() {
     setGames(normalizedGames);
     setCurrentGameIndex(safeIndex);
 
-    await setDoc(
-      SCOREBOARD_REF,
-      {
-        appVersion: APP_VERSION,
-        games: normalizedGames,
-        currentGameIndex: safeIndex,
-        updatedAt: serverTimestamp(),
-      },
-      { merge: true }
-    );
+    try {
+      await setDoc(
+        SCOREBOARD_REF,
+        {
+          appVersion: APP_VERSION,
+          games: normalizedGames,
+          currentGameIndex: safeIndex,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      setFirebaseError("");
+    } catch (error) {
+      console.error("Firestore 저장 실패:", error);
+      setFirebaseError(getFirebaseErrorMessage(error, "공유 점수판 저장"));
+      alert("공유 점수판 저장에 실패했어. 화면 상단의 안내를 확인해줘.");
+    }
   }
 
   async function updateCurrentGame(nextGame) {
@@ -725,6 +800,30 @@ function App() {
     setHandType("");
     setBustTargetId("");
     setPlayerInputs({});
+  }
+
+  function handleUnlock(event) {
+    event.preventDefault();
+
+    if (accessCodeInput.trim() !== ACCESS_CODE) {
+      setAccessError("비밀번호가 맞지 않아.");
+      return;
+    }
+
+    localStorage.setItem(ACCESS_UNLOCK_STORAGE_KEY, "true");
+    setIsUnlocked(true);
+    setAccessCodeInput("");
+    setAccessError("");
+  }
+
+  function handleLock() {
+    localStorage.removeItem(ACCESS_UNLOCK_STORAGE_KEY);
+    setIsUnlocked(false);
+    setGames([]);
+    setCurrentGameIndex(0);
+    setFirebaseError("");
+    resetRoundForm();
+    scrollToTop();
   }
 
   async function handleApplySettings() {
@@ -948,6 +1047,39 @@ function App() {
     );
   }
 
+  if (!isUnlocked) {
+    return (
+      <main className="app-shell lock-shell">
+        <section className="panel lock-panel">
+          <p className="eyebrow">우리집 전용</p>
+          <h1>훌라 점수 계산기</h1>
+          <p>비밀번호를 입력하면 점수판을 볼 수 있어.</p>
+
+          <form className="lock-form" onSubmit={handleUnlock}>
+            <label>
+              <span>비밀번호</span>
+              <input
+                type="password"
+                value={accessCodeInput}
+                autoFocus
+                onChange={(event) => {
+                  setAccessCodeInput(event.target.value);
+                  setAccessError("");
+                }}
+              />
+            </label>
+
+            {accessError && <p className="lock-error">{accessError}</p>}
+
+            <button type="submit" className="primary-button">
+              열기
+            </button>
+          </form>
+        </section>
+      </main>
+    );
+  }
+
   const loserPlayers = winnerId
     ? activePlayers.filter((player) => player.id !== winnerId)
     : [];
@@ -964,7 +1096,17 @@ function App() {
           <h1>훌라 점수 계산기</h1>
           <p>게임별 기록 저장 · 자동 점수 계산 · 모바일 입력 최적화</p>
         </div>
+        <button type="button" className="small-button" onClick={handleLock}>
+          잠그기
+        </button>
       </header>
+
+      {firebaseError && (
+        <section className="panel sync-error" role="alert">
+          <strong>공유 저장 상태 확인 필요</strong>
+          <p>{firebaseError}</p>
+        </section>
+      )}
 
       <section className="panel">
         <div className="section-title-row">

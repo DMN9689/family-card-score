@@ -100,8 +100,50 @@ p {
 }
 
 .app-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
   margin: 8px 0 20px;
   padding: 18px 4px;
+}
+
+.app-header > div {
+  min-width: 0;
+}
+
+.lock-shell {
+  min-height: 100vh;
+  display: grid;
+  align-content: center;
+}
+
+.lock-panel {
+  max-width: 480px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.lock-form {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.lock-form label {
+  display: grid;
+  gap: 7px;
+  color: #334155;
+  font-weight: 650;
+}
+
+.lock-error {
+  margin: 0;
+  border-radius: 14px;
+  background: #fff1f2;
+  color: #be123c;
+  padding: 10px 12px;
+  font-weight: 620;
 }
 
 .eyebrow {
@@ -377,6 +419,23 @@ p {
   padding: 12px 14px;
 }
 
+.sync-error {
+  border-color: #fecdd3;
+  background: #fff1f2;
+}
+
+.sync-error strong {
+  display: block;
+  margin-bottom: 6px;
+  color: #be123c;
+  font-weight: 720;
+}
+
+.sync-error p {
+  margin-bottom: 0;
+  color: #9f1239;
+}
+
 .player-input-list,
 .history-list,
 .round-score-list {
@@ -632,6 +691,7 @@ p {
 
   .section-title-row,
   .mode-header,
+  .app-header,
   .rules-modal-header {
     flex-direction: column;
   }
@@ -755,4 +815,17 @@ select option {
 .danger-toggle.active {
   background-color: #fff1f2 !important;
   color: #be123c !important;
+}
+
+.sync-error p,
+.lock-error {
+  color: #be123c !important;
+}
+
+.positive {
+  color: #2563eb !important;
+}
+
+.negative {
+  color: #dc2626 !important;
 }
