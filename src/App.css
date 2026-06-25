@@ -665,3 +665,94 @@ p {
     display: grid;
   }
 }
+html,
+body,
+#root {
+  color-scheme: light !important;
+  background-color: #f4f6fb !important;
+  color: #111827 !important;
+}
+
+.app-shell,
+.panel,
+.rules-modal,
+.score-card,
+.player-input-card,
+.history-card,
+.round-score-row {
+  color: #111827 !important;
+}
+
+h1,
+h2,
+h3,
+strong,
+label,
+.field-label,
+.score-card span,
+.player-input-header strong,
+.history-header strong,
+.rules-modal-header h2,
+.rules-accordion summary {
+  color: #111827 !important;
+}
+
+p,
+.helper-text,
+.history-card p,
+.mode-header p,
+.rule-content p,
+.round-score-row span,
+.history-header span,
+.hand-button small,
+.empty-text {
+  color: #475569 !important;
+}
+
+input,
+select,
+button {
+  color-scheme: light !important;
+}
+
+input,
+select {
+  background-color: #ffffff !important;
+  color: #111827 !important;
+  -webkit-text-fill-color: #111827 !important;
+}
+
+select option {
+  background-color: #ffffff !important;
+  color: #111827 !important;
+}
+
+.choice-button,
+.toggle-button,
+.mode-button,
+.hand-button,
+.small-button,
+.secondary-button {
+  background-color: #ffffff;
+  color: #334155;
+}
+
+.choice-button.active,
+.toggle-button.active,
+.mode-button.active,
+.hand-button.active {
+  background-color: #eff6ff;
+  color: #1d4ed8;
+}
+
+.primary-button,
+.save-round-area button {
+  background-color: #2563eb !important;
+  color: #ffffff !important;
+}
+
+.danger-button,
+.danger-toggle.active {
+  background-color: #fff1f2 !important;
+  color: #be123c !important;
+}

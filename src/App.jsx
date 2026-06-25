@@ -847,22 +847,22 @@ function App() {
       alert("1등을 선택해야 해.");
       return;
     }
-
+  
     if (!roundMode) {
       alert("종료방식을 선택해야 해.");
       return;
     }
-
+  
     if (roundMode === "thankyou" && !bustTargetId) {
       alert("땡큐박 대상을 선택해야 해.");
       return;
     }
-
+  
     if (roundMode === "hand-stop" && !handType) {
       alert("족보 종류를 선택해야 해.");
       return;
     }
-
+  
     const preview = calculateRoundScores({
       activePlayerIds,
       winnerId,
@@ -871,10 +871,10 @@ function App() {
       handType,
       bustTargetId,
     });
-
+  
     const roundNumber = (currentGame.rounds || []).length + 1;
     const mode = getRoundMode(roundMode);
-
+  
     const newRound = {
       id: `round-${Date.now()}`,
       roundNumber,
@@ -889,14 +889,29 @@ function App() {
       details: preview.details,
       modeDescription: getSelectedModeDescription(roundMode, handType, bustTargetId),
     };
-
-    await updateCurrentGame({
+  
+    const nextGame = {
       ...currentGame,
       rounds: [...(currentGame.rounds || []), newRound],
-    });
-
+    };
+  
+    const nextGames = games.map((game, index) =>
+      index === currentGameIndex ? normalizeGame(nextGame) : game
+    );
+  
     resetRoundForm();
-    window.scrollTo({ top: 0, behavior: "smooth" });
+  
+    window.scrollTo(0, 0);
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+  
+    requestAnimationFrame(() => {
+      window.scrollTo(0, 0);
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+    });
+  
+    await saveData(nextGames, currentGameIndex);
   }
 
   if (isLoading) {
@@ -1100,9 +1115,25 @@ function App() {
             const isUnregistered = isPerfectMode || Boolean(input.isUnregistered);
             const isRankLocked = isUnregistered || isBustTarget;
             const maxRank = activePlayerIds.length;
-            const displayRank = isRankLocked ? maxRank : Number(input.rank || 2);
+            const selectedRank = Number(input.rank || 2);
+            const displayRank = isRankLocked
+              ? maxRank
+              : Math.min(selectedRank, hasAutoLastLoser ? maxRank - 1 : maxRank);
+            const hasAutoLastLoser = loserPlayers.some((loser) => {
+              const loserInput = playerInputs[loser.id] || {};
+              return (
+                roundMode === "perfect" ||
+                Boolean(loserInput.isUnregistered) ||
+                bustTargetId === loser.id
+              );
+            });
+            
             const rankOptions = Array.from(
-              { length: activePlayerIds.length - 1 },
+              {
+                length: hasAutoLastLoser
+                  ? Math.max(activePlayerIds.length - 2, 1)
+                  : activePlayerIds.length - 1,
+              },
               (_, index) => index + 2
             );
 
