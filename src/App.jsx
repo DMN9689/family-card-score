@@ -4,7 +4,7 @@ import "./App.css";
 import { db } from "./firebase";
 
 const APP_VERSION = "hoola-score-v5";
-const ACCESS_CODE = "hoola";
+const ACCESS_CODE = "9682";
 const ACCESS_UNLOCK_STORAGE_KEY = `${APP_VERSION}:access-unlocked`;
 
 const DEFAULT_PLAYERS = [
@@ -75,6 +75,7 @@ function createNewGame() {
       minute: "2-digit",
     })}`,
     createdAt: new Date().toISOString(),
+    isConfigured: false,
     playerNames: createDefaultPlayerNames(),
     activePlayerIds: DEFAULT_ACTIVE_PLAYER_IDS,
     rounds: [],
@@ -97,6 +98,7 @@ function normalizeGame(game) {
     id: game?.id || `game-${Date.now()}`,
     title: game?.title || "게임",
     createdAt: game?.createdAt || new Date().toISOString(),
+    isConfigured: game?.isConfigured ?? true,
     playerNames,
     activePlayerIds,
     rounds: Array.isArray(game?.rounds) ? game.rounds : [],
@@ -601,6 +603,8 @@ function App() {
   const [handType, setHandType] = useState("");
   const [bustTargetId, setBustTargetId] = useState("");
   const [playerInputs, setPlayerInputs] = useState({});
+  const isCurrentGameConfigured = currentGame?.isConfigured !== false;
+  const shouldShowCurrentScore = isCurrentGameConfigured || !showSettings;
 
   const activePlayers = useMemo(() => {
     return activePlayerIds.map((playerId) => ({
@@ -836,6 +840,7 @@ function App() {
 
     const nextGame = {
       ...currentGame,
+      isConfigured: true,
       playerNames: draftPlayerNames,
       activePlayerIds: draftActivePlayerIds,
     };
@@ -1051,19 +1056,30 @@ function App() {
     return (
       <main className="app-shell lock-shell">
         <section className="panel lock-panel">
-          <p className="eyebrow">우리집 전용</p>
-          <h1>훌라 점수 계산기</h1>
-          <p>비밀번호를 입력하면 점수판을 볼 수 있어.</p>
+          <div className="lock-hero">
+            <div className="lock-mark" aria-hidden="true">
+              <span />
+            </div>
+            <div>
+              <p className="eyebrow">우리집 전용</p>
+              <h1>훌라 점수 계산기</h1>
+              <p>가족 점수판은 비밀번호를 입력한 뒤 열 수 있어.</p>
+            </div>
+          </div>
 
           <form className="lock-form" onSubmit={handleUnlock}>
             <label>
-              <span>비밀번호</span>
+              <span>입장 비밀번호</span>
               <input
                 type="password"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={4}
+                placeholder="4자리 숫자"
                 value={accessCodeInput}
                 autoFocus
                 onChange={(event) => {
-                  setAccessCodeInput(event.target.value);
+                  setAccessCodeInput(event.target.value.replace(/\D/g, ""));
                   setAccessError("");
                 }}
               />
@@ -1107,47 +1123,6 @@ function App() {
           <p>{firebaseError}</p>
         </section>
       )}
-
-      <section className="panel">
-        <div className="section-title-row">
-          <div>
-            <h2>현재 점수</h2>
-            <p>{currentGame.title}</p>
-          </div>
-          <button
-            type="button"
-            className="small-button"
-            onClick={() => setShowSettings((value) => !value)}
-          >
-            {showSettings ? "게임 설정 닫기" : "게임 설정 변경"}
-          </button>
-        </div>
-
-        <div className="score-grid">
-          {activePlayers.map((player) => (
-            <div key={player.id} className="score-card">
-              <span>{player.name}</span>
-              <strong
-                className={
-                  totalScores[player.id] > 0
-                    ? "positive"
-                    : totalScores[player.id] < 0
-                      ? "negative"
-                      : ""
-                }
-              >
-                {formatScore(totalScores[player.id] || 0)}
-              </strong>
-            </div>
-          ))}
-        </div>
-
-        <div className="button-row">
-          <button type="button" className="primary-button" onClick={handleCreateNewGame}>
-            새로운 게임 시작
-          </button>
-        </div>
-      </section>
 
       {showSettings && (
         <section className="panel">
@@ -1201,6 +1176,50 @@ function App() {
         </section>
       )}
 
+      {shouldShowCurrentScore && (
+        <section className="panel">
+          <div className="section-title-row">
+            <div>
+              <h2>현재 점수</h2>
+              <p>{currentGame.title}</p>
+            </div>
+            <button
+              type="button"
+              className="small-button"
+              onClick={() => setShowSettings((value) => !value)}
+            >
+              {showSettings ? "게임 설정 닫기" : "게임 설정 변경"}
+            </button>
+          </div>
+
+          <div className="score-grid">
+            {activePlayers.map((player) => (
+              <div key={player.id} className="score-card">
+                <span>{player.name}</span>
+                <strong
+                  className={
+                    totalScores[player.id] > 0
+                      ? "positive"
+                      : totalScores[player.id] < 0
+                        ? "negative"
+                        : ""
+                  }
+                >
+                  {formatScore(totalScores[player.id] || 0)}
+                </strong>
+              </div>
+            ))}
+          </div>
+
+          <div className="button-row">
+            <button type="button" className="primary-button" onClick={handleCreateNewGame}>
+              새로운 게임 시작
+            </button>
+          </div>
+        </section>
+      )}
+
+      {shouldShowCurrentScore && (
       <section className="panel">
         <h2>이번 라운드 입력</h2>
 
@@ -1398,7 +1417,9 @@ function App() {
           })}
         </div>
       </section>
+      )}
 
+      {shouldShowCurrentScore && (
       <section className="panel">
         <div className="section-title-row">
           <div>
@@ -1452,7 +1473,9 @@ function App() {
           </>
         )}
       </section>
+      )}
 
+      {shouldShowCurrentScore && (
       <section className="panel">
         <div className="section-title-row">
           <div>
@@ -1506,7 +1529,9 @@ function App() {
           <p className="empty-text">아직 저장된 라운드가 없어.</p>
         )}
       </section>
+      )}
 
+      {shouldShowCurrentScore && (
       <section className="panel">
         <div className="section-title-row">
           <div>
@@ -1567,6 +1592,7 @@ function App() {
           })}
         </div>
       </section>
+      )}
     </main>
   );
 }
