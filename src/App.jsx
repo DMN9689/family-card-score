@@ -520,61 +520,67 @@ function getLoserScoreCalculation(round, detail, previousScore, roundScore, next
   )}`;
 }
 
+function calculateRoundScoreCalculations(round, previousScores = {}) {
+  const scores = round?.scores || {};
+  const details = Array.isArray(round?.details) ? round.details : [];
+  const rawLoserScores = details
+    .map((detail) => Number(detail?.rawScore))
+    .filter((score) => Number.isFinite(score));
+  const calculatedLoserTotal = Math.abs(rawLoserScores.reduce((sum, score) => sum + score, 0));
+  const calculations = {};
+  const nextScores = { ...previousScores };
+
+  Object.entries(scores).forEach(([playerId, storedScore]) => {
+    const roundScore = Number(storedScore || 0);
+    const previousScore = Number(previousScores[playerId] || 0);
+    const nextScore = previousScore + roundScore;
+    const detail = details.find((item) => item?.playerId === playerId);
+
+    if (playerId === round.winnerId) {
+      calculations[playerId] = formatScoreChangeCalculation(
+        previousScore,
+        roundScore,
+        nextScore,
+        "패자 합계"
+      );
+    } else if (round.bustTargetId && playerId === round.bustTargetId) {
+      const loserTotal = calculatedLoserTotal || Math.abs(roundScore) / 2;
+      const expectedBustScore = -(loserTotal * 2);
+
+      calculations[playerId] =
+        roundScore < 0 && Math.abs(expectedBustScore - roundScore) < 0.000001
+          ? `${formatCalculationScore(previousScore)} - (${formatCalculationScore(
+              loserTotal
+            )}(패자 합계) × 2(독박)) = ${formatCalculationScore(nextScore)}`
+          : formatScoreChangeCalculation(previousScore, roundScore, nextScore, "독박 반영 점수");
+    } else if (round.bustTargetId && roundScore === 0) {
+      calculations[playerId] = `${formatCalculationScore(
+        previousScore
+      )} + 0점(독박 대상이 아니어서 점수 변동 없음) = ${formatCalculationScore(nextScore)}`;
+    } else {
+      calculations[playerId] = getLoserScoreCalculation(
+        round,
+        detail,
+        previousScore,
+        roundScore,
+        nextScore
+      );
+    }
+
+    nextScores[playerId] = nextScore;
+  });
+
+  return { calculations, nextScores };
+}
+
 function calculateRoundScoreHistory(game) {
-  const runningScores = Object.fromEntries(
+  let runningScores = Object.fromEntries(
     (game?.activePlayerIds || DEFAULT_ACTIVE_PLAYER_IDS).map((playerId) => [playerId, 0])
   );
 
   return (game?.rounds || []).map((round) => {
-    const scores = round?.scores || {};
-    const details = Array.isArray(round?.details) ? round.details : [];
-    const rawLoserScores = details
-      .map((detail) => Number(detail?.rawScore))
-      .filter((score) => Number.isFinite(score));
-    const calculatedLoserTotal = Math.abs(
-      rawLoserScores.reduce((sum, score) => sum + score, 0)
-    );
-    const calculations = {};
-
-    Object.entries(scores).forEach(([playerId, storedScore]) => {
-      const roundScore = Number(storedScore || 0);
-      const previousScore = Number(runningScores[playerId] || 0);
-      const nextScore = previousScore + roundScore;
-      const detail = details.find((item) => item?.playerId === playerId);
-
-      if (playerId === round.winnerId) {
-        calculations[playerId] = formatScoreChangeCalculation(
-          previousScore,
-          roundScore,
-          nextScore,
-          "패자 합계"
-        );
-      } else if (round.bustTargetId && playerId === round.bustTargetId) {
-        const loserTotal = calculatedLoserTotal || Math.abs(roundScore) / 2;
-        const expectedBustScore = -(loserTotal * 2);
-
-        calculations[playerId] =
-          roundScore < 0 && Math.abs(expectedBustScore - roundScore) < 0.000001
-            ? `${formatCalculationScore(previousScore)} - (${formatCalculationScore(
-                loserTotal
-              )}(패자 합계) × 2(독박)) = ${formatCalculationScore(nextScore)}`
-            : formatScoreChangeCalculation(previousScore, roundScore, nextScore, "독박 반영 점수");
-      } else if (round.bustTargetId && roundScore === 0) {
-        calculations[playerId] = `${formatCalculationScore(
-          previousScore
-        )} + 0점(독박 대상이 아니어서 점수 변동 없음) = ${formatCalculationScore(nextScore)}`;
-      } else {
-        calculations[playerId] = getLoserScoreCalculation(
-          round,
-          detail,
-          previousScore,
-          roundScore,
-          nextScore
-        );
-      }
-
-      runningScores[playerId] = nextScore;
-    });
+    const { calculations, nextScores } = calculateRoundScoreCalculations(round, runningScores);
+    runningScores = nextScores;
 
     return { round, calculations };
   });
@@ -798,6 +804,23 @@ function App() {
   const totalScores = useMemo(() => {
     return calculateGameTotalScores(currentGame || createNewGame());
   }, [currentGame]);
+
+  const roundPreviewCalculations = useMemo(() => {
+    if (!roundPreview) return {};
+
+    return calculateRoundScoreCalculations(
+      {
+        winnerId,
+        roundMode,
+        handType,
+        handTypeLabel: getHandType(handType)?.label || "",
+        bustTargetId,
+        scores: roundPreview.scores,
+        details: roundPreview.details,
+      },
+      totalScores
+    ).calculations;
+  }, [roundPreview, totalScores, winnerId, roundMode, handType, bustTargetId]);
 
   const roundScoreHistory = useMemo(() => {
     return calculateRoundScoreHistory(currentGame);
@@ -1712,23 +1735,16 @@ function App() {
             <div className="round-score-list">
               {sortPlayersForRoundResult(activePlayers, winnerId, roundPreview.details).map(
                 (player) => {
-                  const detail = roundPreview.details.find((item) => item.playerId === player.id);
                   const score = roundPreview.scores[player.id] || 0;
 
-                  return (
-                    <div key={player.id} className="round-score-row">
-                      <div>
-                        <strong>{player.name}</strong>
-                        <span>
-                          {player.id === winnerId
-                            ? "1등"
-                            : `${detail?.rank || "-"}등${
-                                detail?.multiplierLabels?.length
-                                  ? ` · ${detail.multiplierLabels.join(" · ")}`
-                                  : ""
-                              }`}
-                        </span>
-                      </div>
+                    return (
+                      <div key={player.id} className="round-score-row">
+                        <div>
+                          <strong className="round-history-player-name">{player.name}</strong>
+                          <span className="round-score-calculation">
+                            {roundPreviewCalculations[player.id]}
+                          </span>
+                        </div>
                       <strong className={score > 0 ? "positive" : score < 0 ? "negative" : ""}>
                         {formatScore(score)}
                       </strong>
