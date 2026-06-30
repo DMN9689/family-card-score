@@ -747,6 +747,17 @@ p {
   gap: 6px;
 }
 
+.round-score-list.small .round-score-row > div {
+  align-items: start;
+  text-align: left;
+}
+
+.round-score-list.small .round-score-row > strong:last-child {
+  flex: 0 0 auto;
+  min-width: 3.5rem;
+  text-align: right;
+}
+
 .round-score-list.small .round-score-row {
   border-radius: 14px;
   padding: 9px 11px;
