@@ -6,6 +6,8 @@ import { db } from "./firebase";
 const APP_VERSION = "hoola-score-v5";
 const ACCESS_CODE = "9682";
 const ACCESS_UNLOCK_STORAGE_KEY = `${APP_VERSION}:access-unlocked`;
+const ONE_HOUR_IN_SECONDS = 60 * 60;
+const TEN_MINUTES_IN_SECONDS = 10 * 60;
 
 const DEFAULT_PLAYERS = [
   { id: "p1", name: "재우" },
@@ -195,6 +197,15 @@ function getSelectedModeDescription(roundMode, handType, bustTargetId) {
 function formatScore(score) {
   if (score > 0) return `+${score}`;
   return `${score}`;
+}
+
+function formatTimer(seconds) {
+  const safeSeconds = Math.max(0, Math.floor(Number(seconds) || 0));
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  const remainingSeconds = safeSeconds % 60;
+
+  return [hours, minutes, remainingSeconds].map((value) => String(value).padStart(2, "0")).join(":");
 }
 
 function getFirebaseErrorMessage(error, actionLabel) {
@@ -422,6 +433,153 @@ function calculateGameTotalScores(game) {
   return scores;
 }
 
+function formatCalculationScore(score) {
+  const numericScore = Number(score || 0);
+
+  return `${Object.is(numericScore, -0) ? 0 : numericScore}점`;
+}
+
+function formatScoreChangeCalculation(previousScore, roundScore, nextScore, reason) {
+  const operator = roundScore < 0 ? "-" : "+";
+
+  return `${formatCalculationScore(previousScore)} ${operator} ${formatCalculationScore(
+    Math.abs(roundScore)
+  )}(${reason}) = ${formatCalculationScore(nextScore)}`;
+}
+
+function getDetailMultiplierFactors(round, detail) {
+  const factors = [];
+  const addFactor = (multiplier, label) => {
+    const numericMultiplier = Number(multiplier);
+
+    if (!Number.isFinite(numericMultiplier) || numericMultiplier === 1 || !label) return;
+    factors.push({ multiplier: numericMultiplier, label });
+  };
+
+  if (round.roundMode === "perfect") addFactor(2, "퍼펙트");
+  if (round.roundMode === "hoolbak") addFactor(2, "훌박");
+
+  if (round.roundMode === "hand-stop") {
+    const hand = getHandType(round.handType);
+    addFactor(hand?.multiplier || detail?.multiplier, round.handTypeLabel || hand?.label || "족보");
+  }
+
+  if (detail?.isUnregistered) addFactor(2, "미등록");
+
+  const sevenCount = Number(detail?.sevenCount || 0);
+  if (sevenCount > 0) {
+    addFactor(getSevenMultiplier(sevenCount), `7 보유 ${sevenCount}장`);
+  }
+
+  if (factors.length === 0 && Array.isArray(detail?.multiplierLabels)) {
+    detail.multiplierLabels.forEach((multiplierLabel) => {
+      const match = String(multiplierLabel).match(/^(.+?)\s*×\s*(\d+(?:\.\d+)?)$/);
+      if (!match || match[1].includes("독박")) return;
+
+      const sevenLabelMatch = match[1].match(/^7\s+(\d+)장$/);
+      addFactor(match[2], sevenLabelMatch ? `7 보유 ${sevenLabelMatch[1]}장` : match[1]);
+    });
+  }
+
+  if (factors.length === 0 && Number(detail?.multiplier) > 1) {
+    addFactor(detail.multiplier, "적용 배수");
+  }
+
+  return factors;
+}
+
+function getLoserScoreCalculation(round, detail, previousScore, roundScore, nextScore) {
+  const baseScore = Number(detail?.baseScore);
+  const rawScore = Number(detail?.rawScore);
+  const rank = Number(detail?.rank);
+  const hasDetailedScore =
+    Number.isFinite(baseScore) &&
+    baseScore !== 0 &&
+    Number.isFinite(rawScore) &&
+    Math.abs(rawScore - roundScore) < 0.000001;
+
+  if (!hasDetailedScore || roundScore >= 0) {
+    return formatScoreChangeCalculation(
+      previousScore,
+      roundScore,
+      nextScore,
+      roundScore === 0 ? "이번 라운드 점수 변동 없음" : "이번 라운드"
+    );
+  }
+
+  const baseLabel = `${formatCalculationScore(Math.abs(baseScore))}${
+    Number.isFinite(rank) && rank > 0 ? `(${rank}등)` : "(기본점수)"
+  }`;
+  const factorLabels = getDetailMultiplierFactors(round, detail).map(
+    ({ multiplier, label }) => `${multiplier}(${label})`
+  );
+  const penaltyCalculation = [baseLabel, ...factorLabels].join(" × ");
+
+  return `${formatCalculationScore(previousScore)} - (${penaltyCalculation}) = ${formatCalculationScore(
+    nextScore
+  )}`;
+}
+
+function calculateRoundScoreHistory(game) {
+  const runningScores = Object.fromEntries(
+    (game?.activePlayerIds || DEFAULT_ACTIVE_PLAYER_IDS).map((playerId) => [playerId, 0])
+  );
+
+  return (game?.rounds || []).map((round) => {
+    const scores = round?.scores || {};
+    const details = Array.isArray(round?.details) ? round.details : [];
+    const rawLoserScores = details
+      .map((detail) => Number(detail?.rawScore))
+      .filter((score) => Number.isFinite(score));
+    const calculatedLoserTotal = Math.abs(
+      rawLoserScores.reduce((sum, score) => sum + score, 0)
+    );
+    const calculations = {};
+
+    Object.entries(scores).forEach(([playerId, storedScore]) => {
+      const roundScore = Number(storedScore || 0);
+      const previousScore = Number(runningScores[playerId] || 0);
+      const nextScore = previousScore + roundScore;
+      const detail = details.find((item) => item?.playerId === playerId);
+
+      if (playerId === round.winnerId) {
+        calculations[playerId] = formatScoreChangeCalculation(
+          previousScore,
+          roundScore,
+          nextScore,
+          "패자 합계"
+        );
+      } else if (round.bustTargetId && playerId === round.bustTargetId) {
+        const loserTotal = calculatedLoserTotal || Math.abs(roundScore) / 2;
+        const expectedBustScore = -(loserTotal * 2);
+
+        calculations[playerId] =
+          roundScore < 0 && Math.abs(expectedBustScore - roundScore) < 0.000001
+            ? `${formatCalculationScore(previousScore)} - (${formatCalculationScore(
+                loserTotal
+              )}(패자 합계) × 2(독박)) = ${formatCalculationScore(nextScore)}`
+            : formatScoreChangeCalculation(previousScore, roundScore, nextScore, "독박 반영 점수");
+      } else if (round.bustTargetId && roundScore === 0) {
+        calculations[playerId] = `${formatCalculationScore(
+          previousScore
+        )} + 0점(독박 대상이 아니어서 점수 변동 없음) = ${formatCalculationScore(nextScore)}`;
+      } else {
+        calculations[playerId] = getLoserScoreCalculation(
+          round,
+          detail,
+          previousScore,
+          roundScore,
+          nextScore
+        );
+      }
+
+      runningScores[playerId] = nextScore;
+    });
+
+    return { round, calculations };
+  });
+}
+
 function RuleBookModal({ onClose }) {
   return (
     <div className="rules-modal-backdrop" role="dialog" aria-modal="true">
@@ -582,6 +740,9 @@ function App() {
   const [currentGameIndex, setCurrentGameIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [firebaseError, setFirebaseError] = useState("");
+  const [timerSeconds, setTimerSeconds] = useState(0);
+  const [timerEndsAt, setTimerEndsAt] = useState(null);
+  const [isTimerRunning, setIsTimerRunning] = useState(false);
   const isMountedRef = useRef(false);
   const [isUnlocked, setIsUnlocked] = useState(() => {
     return localStorage.getItem(ACCESS_UNLOCK_STORAGE_KEY) === "true";
@@ -595,6 +756,8 @@ function App() {
 
   const [showSettings, setShowSettings] = useState(true);
   const [showRules, setShowRules] = useState(false);
+  const [isRoundHistoryOpen, setIsRoundHistoryOpen] = useState(true);
+  const [isGameHistoryOpen, setIsGameHistoryOpen] = useState(false);
   const [draftPlayerNames, setDraftPlayerNames] = useState(createDefaultPlayerNames());
   const [draftActivePlayerIds, setDraftActivePlayerIds] = useState(DEFAULT_ACTIVE_PLAYER_IDS);
 
@@ -635,6 +798,26 @@ function App() {
   const totalScores = useMemo(() => {
     return calculateGameTotalScores(currentGame || createNewGame());
   }, [currentGame]);
+
+  const roundScoreHistory = useMemo(() => {
+    return calculateRoundScoreHistory(currentGame);
+  }, [currentGame]);
+
+  useEffect(() => {
+    if (!isTimerRunning || !timerEndsAt) return undefined;
+
+    const intervalId = window.setInterval(() => {
+      const nextSeconds = Math.max(0, Math.ceil((timerEndsAt - Date.now()) / 1000));
+      setTimerSeconds(nextSeconds);
+
+      if (nextSeconds === 0) {
+        setIsTimerRunning(false);
+        setTimerEndsAt(null);
+      }
+    }, 250);
+
+    return () => window.clearInterval(intervalId);
+  }, [isTimerRunning, timerEndsAt]);
 
   useEffect(() => {
     if (!isUnlocked) {
@@ -804,6 +987,48 @@ function App() {
     setHandType("");
     setBustTargetId("");
     setPlayerInputs({});
+  }
+
+  function handleAdjustTimer(changeInSeconds) {
+    const currentSeconds = isTimerRunning && timerEndsAt
+      ? Math.max(0, Math.ceil((timerEndsAt - Date.now()) / 1000))
+      : timerSeconds;
+    const nextSeconds = Math.max(0, currentSeconds + changeInSeconds);
+
+    setTimerSeconds(nextSeconds);
+
+    if (isTimerRunning) {
+      if (nextSeconds === 0) {
+        setIsTimerRunning(false);
+        setTimerEndsAt(null);
+      } else {
+        setTimerEndsAt(Date.now() + nextSeconds * 1000);
+      }
+    }
+  }
+
+  function handleTimerToggle() {
+    if (isTimerRunning) {
+      const nextSeconds = timerEndsAt
+        ? Math.max(0, Math.ceil((timerEndsAt - Date.now()) / 1000))
+        : timerSeconds;
+
+      setTimerSeconds(nextSeconds);
+      setTimerEndsAt(null);
+      setIsTimerRunning(false);
+      return;
+    }
+
+    if (timerSeconds <= 0) return;
+
+    setTimerEndsAt(Date.now() + timerSeconds * 1000);
+    setIsTimerRunning(true);
+  }
+
+  function handleResetTimer() {
+    setTimerSeconds(0);
+    setTimerEndsAt(null);
+    setIsTimerRunning(false);
   }
 
   function handleUnlock(event) {
@@ -1105,6 +1330,54 @@ function App() {
   return (
     <main className="app-shell">
       {showRules && <RuleBookModal onClose={() => setShowRules(false)} />}
+
+      <section className={isTimerRunning ? "game-timer panel running" : "game-timer panel"}>
+        <div className="game-timer-main">
+          <div>
+            <p className="eyebrow">게임 타이머</p>
+            <strong className="timer-display" aria-label={`남은 시간 ${formatTimer(timerSeconds)}`}>
+              {formatTimer(timerSeconds)}
+            </strong>
+          </div>
+          <span className={isTimerRunning ? "timer-status active" : "timer-status"}>
+            {isTimerRunning ? "진행 중" : timerSeconds > 0 ? "일시정지" : "시간을 추가해 주세요"}
+          </span>
+        </div>
+
+        <div className="timer-adjust-grid">
+          <button type="button" onClick={() => handleAdjustTimer(-ONE_HOUR_IN_SECONDS)}>
+            -1시간
+          </button>
+          <button type="button" onClick={() => handleAdjustTimer(-TEN_MINUTES_IN_SECONDS)}>
+            -10분
+          </button>
+          <button type="button" onClick={() => handleAdjustTimer(TEN_MINUTES_IN_SECONDS)}>
+            +10분
+          </button>
+          <button type="button" onClick={() => handleAdjustTimer(ONE_HOUR_IN_SECONDS)}>
+            +1시간
+          </button>
+        </div>
+
+        <div className="timer-action-row">
+          <button
+            type="button"
+            className="primary-button"
+            disabled={!isTimerRunning && timerSeconds === 0}
+            onClick={handleTimerToggle}
+          >
+            {isTimerRunning ? "일시정지" : "시작"}
+          </button>
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={!isTimerRunning && timerSeconds === 0}
+            onClick={handleResetTimer}
+          >
+            초기화
+          </button>
+        </div>
+      </section>
 
       <header className="app-header">
         <div>
@@ -1480,9 +1753,18 @@ function App() {
         <div className="section-title-row">
           <div>
             <h2>라운드 이력</h2>
-            <p>최근 라운드가 위에 표시돼.</p>
+            <p>총 {roundScoreHistory.length}라운드 · 최근 라운드가 위에 표시돼.</p>
           </div>
           <div className="button-row compact">
+            <button
+              type="button"
+              className="small-button"
+              aria-expanded={isRoundHistoryOpen}
+              aria-controls="round-history-content"
+              onClick={() => setIsRoundHistoryOpen((isOpen) => !isOpen)}
+            >
+              {isRoundHistoryOpen ? "이력 접기" : "이력 펼치기"}
+            </button>
             <button type="button" className="secondary-button" onClick={handleUndoLastRound}>
               마지막 라운드 취소
             </button>
@@ -1492,10 +1774,10 @@ function App() {
           </div>
         </div>
 
-        {currentGame.rounds?.length ? (
-          <div className="history-list">
-            {[...currentGame.rounds].reverse().map((round) => (
-              <article key={round.id} className="history-card">
+        {isRoundHistoryOpen && (roundScoreHistory.length ? (
+          <div id="round-history-content" className="history-list">
+            {[...roundScoreHistory].reverse().map(({ round, calculations }, historyIndex) => (
+              <article key={round.id || `round-history-${historyIndex}`} className="history-card">
                 <div className="history-header">
                   <strong>{round.roundNumber}라운드</strong>
                   <span>{round.modeDescription || round.roundModeLabel}</span>
@@ -1513,21 +1795,39 @@ function App() {
                     Object.entries(round.scores || {}),
                     round.winnerId,
                     round.details || []
-                  ).map(([playerId, score]) => (
-                    <div key={playerId} className="round-score-row">
-                      <span>{getPlayerName(playerNames, playerId)}</span>
-                      <strong className={score > 0 ? "positive" : score < 0 ? "negative" : ""}>
-                        {formatScore(score)}
-                      </strong>
-                    </div>
-                  ))}
+                  ).map(([playerId, score]) => {
+                    const numericScore = Number(score || 0);
+
+                    return (
+                      <div key={playerId} className="round-score-row">
+                        <div>
+                          <strong className="round-history-player-name">
+                            {getPlayerName(playerNames, playerId)}
+                          </strong>
+                          <span className="round-score-calculation">
+                            {calculations[playerId] ||
+                              `${formatCalculationScore(0)} + ${formatCalculationScore(
+                                numericScore
+                              )}(이번 라운드) = ${formatCalculationScore(numericScore)}`}
+                          </span>
+                        </div>
+                        <strong
+                          className={
+                            numericScore > 0 ? "positive" : numericScore < 0 ? "negative" : ""
+                          }
+                        >
+                          {formatScore(numericScore)}
+                        </strong>
+                      </div>
+                    );
+                  })}
                 </div>
               </article>
             ))}
           </div>
         ) : (
-          <p className="empty-text">아직 저장된 라운드가 없어.</p>
-        )}
+          <p id="round-history-content" className="empty-text">아직 저장된 라운드가 없어.</p>
+        ))}
       </section>
       )}
 
@@ -1536,14 +1836,26 @@ function App() {
         <div className="section-title-row">
           <div>
             <h2>게임 기록</h2>
-            <p>게임별 점수와 라운드 기록을 관리해.</p>
+            <p>총 {games.length}게임 · 게임별 점수와 라운드 기록을 관리해.</p>
           </div>
-          <button type="button" className="danger-button" onClick={handleDeleteAllGames}>
-            전체 게임 삭제
-          </button>
+          <div className="button-row compact">
+            <button
+              type="button"
+              className="small-button"
+              aria-expanded={isGameHistoryOpen}
+              aria-controls="game-history-content"
+              onClick={() => setIsGameHistoryOpen((isOpen) => !isOpen)}
+            >
+              {isGameHistoryOpen ? "이력 접기" : "이력 펼치기"}
+            </button>
+            <button type="button" className="danger-button" onClick={handleDeleteAllGames}>
+              전체 게임 삭제
+            </button>
+          </div>
         </div>
 
-        <div className="history-list">
+        {isGameHistoryOpen && (
+        <div id="game-history-content" className="history-list">
           {games.map((game, index) => {
             const gameScores = calculateGameTotalScores(game);
             const gameActivePlayers = (game.activePlayerIds || DEFAULT_ACTIVE_PLAYER_IDS).map(
@@ -1591,6 +1903,7 @@ function App() {
             );
           })}
         </div>
+        )}
       </section>
       )}
     </main>

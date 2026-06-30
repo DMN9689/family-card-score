@@ -131,6 +131,81 @@ p {
   margin-top: 8px;
 }
 
+.game-timer {
+  display: grid;
+  gap: 14px;
+  margin-top: 8px;
+  border-color: rgba(37, 99, 235, 0.22);
+  background:
+    linear-gradient(135deg, rgba(239, 246, 255, 0.96), rgba(255, 255, 255, 0.96));
+}
+
+.game-timer.running {
+  border-color: rgba(37, 99, 235, 0.5);
+  box-shadow: 0 16px 38px rgba(37, 99, 235, 0.12);
+}
+
+.game-timer-main {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.game-timer-main .eyebrow {
+  margin-bottom: 5px;
+}
+
+.timer-display {
+  display: block;
+  font-variant-numeric: tabular-nums;
+  font-size: clamp(2.35rem, 10vw, 4.25rem);
+  line-height: 1;
+  letter-spacing: -0.055em;
+}
+
+.timer-status {
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #64748b;
+  padding: 6px 10px;
+  font-size: 0.84rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.timer-status.active {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.timer-adjust-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.timer-adjust-grid button {
+  min-height: 44px;
+  border: 1px solid #bfdbfe;
+  border-radius: 14px;
+  background: #ffffff;
+  color: #1e40af;
+  padding: 9px 8px;
+  font-weight: 680;
+}
+
+.timer-action-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.timer-action-row button {
+  min-height: 44px;
+  border-radius: 14px;
+}
+
 .lock-shell {
   min-height: 100vh;
   display: grid;
@@ -639,6 +714,7 @@ p {
 
 .round-score-row > div {
   display: grid;
+  flex: 1 1 auto;
   gap: 3px;
   min-width: 0;
 }
@@ -656,6 +732,15 @@ p {
 .round-score-row strong:last-child {
   font-size: 1.28rem;
   white-space: nowrap;
+}
+
+.round-history-player-name {
+  font-size: 0.95rem;
+}
+
+.round-score-calculation {
+  overflow-wrap: anywhere;
+  word-break: keep-all;
 }
 
 .round-score-list.small {
@@ -815,6 +900,14 @@ p {
     padding: 15px;
   }
 
+  .timer-adjust-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .timer-display {
+    font-size: clamp(2.25rem, 15vw, 3.5rem);
+  }
+
   .lock-panel {
     padding: 20px 15px 15px;
   }
@@ -859,6 +952,14 @@ p {
 
   .round-score-row {
     padding: 12px;
+  }
+
+  .round-score-list.small .round-score-row {
+    align-items: flex-start;
+  }
+
+  .round-score-calculation {
+    line-height: 1.5;
   }
 
   .save-round-area {
