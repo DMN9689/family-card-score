@@ -6,6 +6,7 @@ import { db } from "./firebase";
 const APP_VERSION = "hoola-score-v5";
 const ACCESS_CODE = "9682";
 const ACCESS_UNLOCK_STORAGE_KEY = `${APP_VERSION}:access-unlocked`;
+const TIMER_STORAGE_KEY = `${APP_VERSION}:timer`;
 const ONE_HOUR_IN_SECONDS = 60 * 60;
 const TEN_MINUTES_IN_SECONDS = 10 * 60;
 
@@ -206,6 +207,26 @@ function formatTimer(seconds) {
   const remainingSeconds = safeSeconds % 60;
 
   return [hours, minutes, remainingSeconds].map((value) => String(value).padStart(2, "0")).join(":");
+}
+
+function loadStoredTimer() {
+  try {
+    const storedTimer = JSON.parse(localStorage.getItem(TIMER_STORAGE_KEY) || "null");
+    const storedSeconds = Math.max(0, Math.floor(Number(storedTimer?.seconds) || 0));
+    const storedEndsAt = Number(storedTimer?.endsAt);
+    const canResume = Boolean(storedTimer?.isRunning) && Number.isFinite(storedEndsAt);
+    const resumedSeconds = canResume
+      ? Math.max(0, Math.ceil((storedEndsAt - Date.now()) / 1000))
+      : storedSeconds;
+
+    return {
+      seconds: resumedSeconds,
+      endsAt: canResume && resumedSeconds > 0 ? storedEndsAt : null,
+      isRunning: canResume && resumedSeconds > 0,
+    };
+  } catch {
+    return { seconds: 0, endsAt: null, isRunning: false };
+  }
 }
 
 function getFirebaseErrorMessage(error, actionLabel) {
@@ -746,9 +767,10 @@ function App() {
   const [currentGameIndex, setCurrentGameIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [firebaseError, setFirebaseError] = useState("");
-  const [timerSeconds, setTimerSeconds] = useState(0);
-  const [timerEndsAt, setTimerEndsAt] = useState(null);
-  const [isTimerRunning, setIsTimerRunning] = useState(false);
+  const [initialTimer] = useState(loadStoredTimer);
+  const [timerSeconds, setTimerSeconds] = useState(initialTimer.seconds);
+  const [timerEndsAt, setTimerEndsAt] = useState(initialTimer.endsAt);
+  const [isTimerRunning, setIsTimerRunning] = useState(initialTimer.isRunning);
   const isMountedRef = useRef(false);
   const [isUnlocked, setIsUnlocked] = useState(() => {
     return localStorage.getItem(ACCESS_UNLOCK_STORAGE_KEY) === "true";
@@ -841,6 +863,21 @@ function App() {
 
     return () => window.clearInterval(intervalId);
   }, [isTimerRunning, timerEndsAt]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        TIMER_STORAGE_KEY,
+        JSON.stringify({
+          seconds: timerSeconds,
+          endsAt: timerEndsAt,
+          isRunning: isTimerRunning,
+        })
+      );
+    } catch {
+      // 브라우저 저장소를 사용할 수 없어도 타이머 자체는 계속 동작한다.
+    }
+  }, [timerSeconds, timerEndsAt, isTimerRunning]);
 
   useEffect(() => {
     if (!isUnlocked) {
