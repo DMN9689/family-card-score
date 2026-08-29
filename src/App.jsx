@@ -781,6 +781,38 @@ function RuleBookModal({ onClose }) {
   );
 }
 
+function OverallStatsModal({ stats, totalGames, totalRounds, onClose }) {
+  return (
+    <div className="rules-modal-backdrop" role="dialog" aria-modal="true">
+      <div className="rules-modal">
+        <div className="rules-modal-header">
+          <div>
+            <h2>통산 전적</h2>
+            <p>
+              전체 {totalGames}게임 · {totalRounds}라운드 기준 1등 횟수
+            </p>
+          </div>
+          <button type="button" className="small-button" onClick={onClose}>
+            닫기
+          </button>
+        </div>
+
+        <div className="score-grid">
+          {stats.map((stat) => (
+            <div key={stat.id} className="score-card">
+              <span>{stat.name}</span>
+              <strong className={stat.isLeader ? "positive" : ""}>
+                {stat.isLeader && stat.wins > 0 ? "👑 " : ""}
+                {stat.wins}승
+              </strong>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [games, setGames] = useState([]);
   const [currentGameIndex, setCurrentGameIndex] = useState(0);
@@ -803,6 +835,7 @@ function App() {
 
   const [showSettings, setShowSettings] = useState(true);
   const [showRules, setShowRules] = useState(false);
+  const [showOverallStats, setShowOverallStats] = useState(false);
   const [isRoundHistoryOpen, setIsRoundHistoryOpen] = useState(true);
   const [isGameHistoryOpen, setIsGameHistoryOpen] = useState(false);
   const [draftPlayerNames, setDraftPlayerNames] = useState(createDefaultPlayerNames());
@@ -1440,6 +1473,14 @@ function App() {
   return (
     <main className="app-shell">
       {showRules && <RuleBookModal onClose={() => setShowRules(false)} />}
+      {showOverallStats && (
+        <OverallStatsModal
+          stats={overallStats}
+          totalGames={games.length}
+          totalRounds={totalRoundsAllGames}
+          onClose={() => setShowOverallStats(false)}
+        />
+      )}
 
       <section className={isTimerRunning ? "game-timer panel running" : "game-timer panel"}>
         <div className="game-timer-main">
@@ -1555,13 +1596,25 @@ function App() {
               <h2>현재 점수</h2>
               <p>{currentGame.title}</p>
             </div>
-            <button
-              type="button"
-              className="small-button"
-              onClick={() => setShowSettings((value) => !value)}
-            >
-              {showSettings ? "게임 설정 닫기" : "게임 설정 변경"}
-            </button>
+            <div className="button-row compact">
+              <button
+                type="button"
+                className="small-button"
+                onClick={() => setShowSettings((value) => !value)}
+              >
+                {showSettings ? "게임 설정 닫기" : "게임 설정 변경"}
+              </button>
+              <button
+                type="button"
+                className="small-button"
+                onClick={() => setShowOverallStats(true)}
+              >
+                통산 전적
+              </button>
+              <button type="button" className="small-button" onClick={() => setShowRules(true)}>
+                규칙 설명집
+              </button>
+            </div>
           </div>
 
           <div className="score-grid">
@@ -1625,16 +1678,6 @@ function App() {
               </button>
             ))}
           </div>
-        </div>
-
-        <div className="mode-header">
-          <div>
-            <h3>종료 방식</h3>
-            <p>{selectedModeDescription}</p>
-          </div>
-          <button type="button" className="small-button" onClick={() => setShowRules(true)}>
-            규칙 설명집
-          </button>
         </div>
 
         <div className="mode-button-grid">
@@ -1985,29 +2028,6 @@ function App() {
         ) : (
           <p id="round-history-content" className="empty-text">아직 저장된 라운드가 없어.</p>
         ))}
-      </section>
-      )}
-
-      {shouldShowCurrentScore && (
-      <section className="panel">
-        <div className="section-title-row">
-          <div>
-            <h2>통산 전적</h2>
-            <p>전체 {games.length}게임 · {totalRoundsAllGames}라운드 기준 1등 횟수</p>
-          </div>
-        </div>
-
-        <div className="score-grid">
-          {overallStats.map((stat) => (
-            <div key={stat.id} className="score-card">
-              <span>{stat.name}</span>
-              <strong className={stat.isLeader ? "positive" : ""}>
-                {stat.isLeader && stat.wins > 0 ? "👑 " : ""}
-                {stat.wins}승
-              </strong>
-            </div>
-          ))}
-        </div>
       </section>
       )}
 

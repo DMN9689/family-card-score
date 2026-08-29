@@ -335,7 +335,6 @@ p {
 }
 
 .section-title-row,
-.mode-header,
 .history-header,
 .player-input-header,
 .rules-modal-header {
@@ -346,7 +345,6 @@ p {
 }
 
 .section-title-row > div,
-.mode-header > div,
 .rules-modal-header > div {
   min-width: 0;
 }
@@ -580,23 +578,6 @@ p {
   color: #334155;
   font-size: 0.9rem;
   font-weight: 620;
-}
-
-.mode-header {
-  margin-top: 16px;
-  border-radius: 18px;
-  background: #f8fafc;
-  padding: 14px;
-}
-
-.mode-header h3 {
-  margin-bottom: 4px;
-}
-
-.mode-header p {
-  margin-bottom: 0;
-  color: #475569;
-  font-weight: 520;
 }
 
 .hand-type-section {
@@ -938,7 +919,6 @@ p {
   }
 
   .section-title-row,
-  .mode-header,
   .rules-modal-header {
     flex-direction: column;
   }
@@ -1015,7 +995,6 @@ label,
 p,
 .helper-text,
 .history-card p,
-.mode-header p,
 .rule-content p,
 .round-score-row span,
 .history-header span,
