@@ -405,6 +405,21 @@ p {
   font-weight: 600;
 }
 
+.win-badge {
+  justify-self: start;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #475569;
+  padding: 3px 9px;
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.win-badge.leader {
+  background: #fef9c3;
+  color: #92400e;
+}
+
 .score-card strong {
   font-size: 2rem;
   font-weight: 720;
@@ -495,7 +510,11 @@ p {
 }
 
 .mode-button-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.other-modes-toggle {
+  margin-top: 10px;
 }
 
 .hand-button-grid {
@@ -736,6 +755,11 @@ p {
 
 .round-history-player-name {
   font-size: 0.95rem;
+}
+
+.round-mvp {
+  color: #2563eb;
+  font-weight: 800;
 }
 
 .round-score-calculation {

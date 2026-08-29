@@ -15,7 +15,6 @@ const DEFAULT_PLAYERS = [
   { id: "p2", name: "항미" },
   { id: "p3", name: "수현" },
   { id: "p4", name: "가현" },
-  { id: "p5", name: "이름" },
 ];
 
 const DEFAULT_ACTIVE_PLAYER_IDS = ["p1", "p2", "p3", "p4"];
@@ -36,6 +35,14 @@ const ROUND_MODES = [
   { value: "stop", label: "스톱", badge: "기본 ×1" },
   { value: "hand-stop", label: "족보 스톱", badge: "×4~×8" },
 ];
+
+const PRIMARY_ROUND_MODE_VALUES = ["normal", "perfect", "stop", "hoolbak"];
+const PRIMARY_ROUND_MODES = PRIMARY_ROUND_MODE_VALUES.map((value) =>
+  ROUND_MODES.find((mode) => mode.value === value)
+);
+const SECONDARY_ROUND_MODES = ROUND_MODES.filter(
+  (mode) => !PRIMARY_ROUND_MODE_VALUES.includes(mode.value)
+);
 
 const HAND_TYPES = [
   {
@@ -441,6 +448,18 @@ function calculateRoundScores({
   };
 }
 
+function getRoundMvpIds(scores) {
+  const entries = Object.entries(scores || {}).map(([playerId, score]) => [
+    playerId,
+    Number(score) || 0,
+  ]);
+  const maxScore = entries.reduce((max, [, score]) => Math.max(max, score), -Infinity);
+
+  if (!(maxScore > 0)) return new Set();
+
+  return new Set(entries.filter(([, score]) => score === maxScore).map(([playerId]) => playerId));
+}
+
 function calculateGameTotalScores(game) {
   const activePlayerIds = game.activePlayerIds || DEFAULT_ACTIVE_PLAYER_IDS;
   const scores = Object.fromEntries(activePlayerIds.map((playerId) => [playerId, 0]));
@@ -793,6 +812,7 @@ function App() {
   const [roundMode, setRoundMode] = useState("");
   const [handType, setHandType] = useState("");
   const [bustTargetId, setBustTargetId] = useState("");
+  const [showOtherModes, setShowOtherModes] = useState(false);
   const [playerInputs, setPlayerInputs] = useState({});
   const isCurrentGameConfigured = currentGame?.isConfigured !== false;
   const shouldShowCurrentScore = isCurrentGameConfigured || !showSettings;
@@ -826,6 +846,39 @@ function App() {
   const totalScores = useMemo(() => {
     return calculateGameTotalScores(currentGame || createNewGame());
   }, [currentGame]);
+
+  const roundWinCounts = useMemo(() => {
+    const counts = {};
+
+    (currentGame?.rounds || []).forEach((round) => {
+      if (round.winnerId) counts[round.winnerId] = (counts[round.winnerId] || 0) + 1;
+    });
+
+    return counts;
+  }, [currentGame]);
+
+  const maxRoundWinCount = Math.max(0, ...Object.values(roundWinCounts));
+
+  const overallStats = useMemo(() => {
+    const wins = {};
+
+    games.forEach((game) => {
+      (game.rounds || []).forEach((round) => {
+        if (round.winnerId) wins[round.winnerId] = (wins[round.winnerId] || 0) + 1;
+      });
+    });
+
+    const maxWins = Math.max(0, ...Object.values(wins));
+
+    return DEFAULT_PLAYERS.map((player) => ({
+      id: player.id,
+      name: getPlayerName(playerNames, player.id),
+      wins: wins[player.id] || 0,
+      isLeader: maxWins > 0 && (wins[player.id] || 0) === maxWins,
+    }));
+  }, [games, playerNames]);
+
+  const totalRoundsAllGames = games.reduce((sum, game) => sum + (game.rounds?.length || 0), 0);
 
   const roundPreviewCalculations = useMemo(() => {
     if (!roundPreview) return {};
@@ -1386,6 +1439,7 @@ function App() {
     : [];
 
   const selectedModeDescription = getSelectedModeDescription(roundMode, handType, bustTargetId);
+  const isSecondaryModeSelected = SECONDARY_ROUND_MODES.some((mode) => mode.value === roundMode);
 
   return (
     <main className="app-shell">
@@ -1486,7 +1540,7 @@ function App() {
             <div className="name-grid">
               {DEFAULT_PLAYERS.map((player) => (
                 <label key={player.id}>
-                  <span>{player.name}</span>
+                  <span>{getPlayerName(currentGame.playerNames, player.id)}</span>
                   <input
                     value={draftPlayerNames[player.id] || ""}
                     onChange={(event) =>
@@ -1526,22 +1580,33 @@ function App() {
           </div>
 
           <div className="score-grid">
-            {activePlayers.map((player) => (
-              <div key={player.id} className="score-card">
-                <span>{player.name}</span>
-                <strong
-                  className={
-                    totalScores[player.id] > 0
-                      ? "positive"
-                      : totalScores[player.id] < 0
-                        ? "negative"
-                        : ""
-                  }
-                >
-                  {formatScore(totalScores[player.id] || 0)}
-                </strong>
-              </div>
-            ))}
+            {activePlayers.map((player) => {
+              const wins = roundWinCounts[player.id] || 0;
+              const isRoundLeader = maxRoundWinCount > 0 && wins === maxRoundWinCount;
+
+              return (
+                <div key={player.id} className="score-card">
+                  <span>{player.name}</span>
+                  {wins > 0 && (
+                    <span className={isRoundLeader ? "win-badge leader" : "win-badge"}>
+                      {isRoundLeader ? "👑 " : ""}
+                      {wins}승
+                    </span>
+                  )}
+                  <strong
+                    className={
+                      totalScores[player.id] > 0
+                        ? "positive"
+                        : totalScores[player.id] < 0
+                          ? "negative"
+                          : ""
+                    }
+                  >
+                    {formatScore(totalScores[player.id] || 0)}
+                  </strong>
+                </div>
+              );
+            })}
           </div>
 
           <div className="button-row">
@@ -1583,7 +1648,7 @@ function App() {
         </div>
 
         <div className="mode-button-grid">
-          {ROUND_MODES.map((mode) => (
+          {PRIMARY_ROUND_MODES.map((mode) => (
             <button
               key={mode.value}
               type="button"
@@ -1595,6 +1660,31 @@ function App() {
             </button>
           ))}
         </div>
+
+        <button
+          type="button"
+          className="small-button other-modes-toggle"
+          aria-expanded={showOtherModes || isSecondaryModeSelected}
+          onClick={() => setShowOtherModes((value) => !value)}
+        >
+          {showOtherModes || isSecondaryModeSelected ? "기타 종료방식 접기" : "기타 종료방식 (땡큐훌라 · 족보 스톱)"}
+        </button>
+
+        {(showOtherModes || isSecondaryModeSelected) && (
+          <div className="mode-button-grid">
+            {SECONDARY_ROUND_MODES.map((mode) => (
+              <button
+                key={mode.value}
+                type="button"
+                className={roundMode === mode.value ? "mode-button active" : "mode-button"}
+                onClick={() => handleRoundModeChange(roundMode === mode.value ? "" : mode.value)}
+              >
+                <span>{mode.label}</span>
+                <strong>{mode.badge}</strong>
+              </button>
+            ))}
+          </div>
+        )}
 
         {roundMode === "hand-stop" && (
           <div className="hand-type-section">
@@ -1770,25 +1860,38 @@ function App() {
         {roundPreview && (
           <>
             <div className="round-score-list">
-              {sortPlayersForRoundResult(activePlayers, winnerId, roundPreview.details).map(
-                (player) => {
-                  const score = roundPreview.scores[player.id] || 0;
+              {(() => {
+                const mvpIds = getRoundMvpIds(roundPreview.scores);
+
+                return sortPlayersForRoundResult(activePlayers, winnerId, roundPreview.details).map(
+                  (player) => {
+                    const score = roundPreview.scores[player.id] || 0;
+                    const isMvp = mvpIds.has(player.id);
 
                     return (
                       <div key={player.id} className="round-score-row">
                         <div>
-                          <strong className="round-history-player-name">{player.name}</strong>
+                          <strong
+                            className={
+                              isMvp
+                                ? "round-history-player-name round-mvp"
+                                : "round-history-player-name"
+                            }
+                          >
+                            {player.name}
+                          </strong>
                           <span className="round-score-calculation">
                             {roundPreviewCalculations[player.id]}
                           </span>
                         </div>
-                      <strong className={score > 0 ? "positive" : score < 0 ? "negative" : ""}>
-                        {formatScore(score)}
-                      </strong>
-                    </div>
-                  );
-                }
-              )}
+                        <strong className={score > 0 ? "positive" : score < 0 ? "negative" : ""}>
+                          {formatScore(score)}
+                        </strong>
+                      </div>
+                    );
+                  }
+                );
+              })()}
             </div>
 
             <div className="save-round-area">
@@ -1844,17 +1947,27 @@ function App() {
                 </p>
 
                 <div className="round-score-list small">
-                  {sortScoreEntriesForRoundResult(
-                    Object.entries(round.scores || {}),
-                    round.winnerId,
-                    round.details || []
-                  ).map(([playerId, score]) => {
+                  {(() => {
+                    const mvpIds = getRoundMvpIds(round.scores);
+
+                    return sortScoreEntriesForRoundResult(
+                      Object.entries(round.scores || {}),
+                      round.winnerId,
+                      round.details || []
+                    ).map(([playerId, score]) => {
                     const numericScore = Number(score || 0);
+                    const isMvp = mvpIds.has(playerId);
 
                     return (
                       <div key={playerId} className="round-score-row">
                         <div>
-                          <strong className="round-history-player-name">
+                          <strong
+                            className={
+                              isMvp
+                                ? "round-history-player-name round-mvp"
+                                : "round-history-player-name"
+                            }
+                          >
                             {getPlayerName(playerNames, playerId)}
                           </strong>
                           <span className="round-score-calculation">
@@ -1873,7 +1986,8 @@ function App() {
                         </strong>
                       </div>
                     );
-                  })}
+                    });
+                  })()}
                 </div>
               </article>
             ))}
@@ -1881,6 +1995,29 @@ function App() {
         ) : (
           <p id="round-history-content" className="empty-text">아직 저장된 라운드가 없어.</p>
         ))}
+      </section>
+      )}
+
+      {shouldShowCurrentScore && (
+      <section className="panel">
+        <div className="section-title-row">
+          <div>
+            <h2>통산 전적</h2>
+            <p>전체 {games.length}게임 · {totalRoundsAllGames}라운드 기준 1등 횟수</p>
+          </div>
+        </div>
+
+        <div className="score-grid">
+          {overallStats.map((stat) => (
+            <div key={stat.id} className="score-card">
+              <span>{stat.name}</span>
+              <strong className={stat.isLeader ? "positive" : ""}>
+                {stat.isLeader && stat.wins > 0 ? "👑 " : ""}
+                {stat.wins}승
+              </strong>
+            </div>
+          ))}
+        </div>
       </section>
       )}
 
