@@ -34,7 +34,10 @@ const ROUND_MODES = [
   { value: "hoolbak", label: "훌박", badge: "×2" },
   { value: "stop", label: "스톱", badge: "기본 ×1" },
   { value: "hand-stop", label: "족보 스톱", badge: "×4~×8" },
+  { value: "hoolbogi", label: "훌보기", badge: "최대 ×8" },
 ];
+
+const HOOLBOGI_MULTIPLIER_CAP = 8;
 
 const PRIMARY_ROUND_MODE_VALUES = ["normal", "perfect", "stop", "hoolbak"];
 const PRIMARY_ROUND_MODES = PRIMARY_ROUND_MODE_VALUES.map((value) =>
@@ -153,6 +156,7 @@ function getRoundMode(roundMode) {
 
 function getRoundModeMultiplier(roundMode, handType) {
   if (roundMode === "perfect") return 2;
+  if (roundMode === "hoolbogi") return 2;
   if (roundMode === "hoolbak") return 2;
 
   if (roundMode === "hand-stop") {
@@ -160,6 +164,10 @@ function getRoundModeMultiplier(roundMode, handType) {
   }
 
   return 1;
+}
+
+function isForcedUnregisteredMode(roundMode) {
+  return roundMode === "perfect" || roundMode === "hoolbogi";
 }
 
 function getSelectedModeDescription(roundMode, handType, bustTargetId) {
@@ -183,6 +191,10 @@ function getSelectedModeDescription(roundMode, handType, bustTargetId) {
 
   if (roundMode === "hoolbak") {
     return "훌박: 패자 전원 훌박 ×2";
+  }
+
+  if (roundMode === "hoolbogi") {
+    return `훌보기: 패자 전원 강제 퍼펙트 처리 + 자동 미등록 ×2, 배수는 최대 ×${HOOLBOGI_MULTIPLIER_CAP}까지만 적용`;
   }
 
   if (roundMode === "stop") {
@@ -335,28 +347,27 @@ function calculateRoundScores({
 
   const autoLastCount = loserIds.filter((playerId) => {
     const input = playerInputs[playerId] || {};
-  
+
     return (
-      roundMode === "perfect" ||
+      isForcedUnregisteredMode(roundMode) ||
       Boolean(input.isUnregistered) ||
       (isBustRound && playerId === bustTargetId)
     );
   }).length;
-  
+
   const maxSelectableRank = Math.max(2, maxRank - autoLastCount);
 
   const details = loserIds.map((playerId) => {
     const input = playerInputs[playerId] || {};
     const isBustTarget = isBustRound && playerId === bustTargetId;
-    const isPerfectMode = roundMode === "perfect";
-    const isUnregistered = isPerfectMode || Boolean(input.isUnregistered);
+    const isUnregistered = isForcedUnregisteredMode(roundMode) || Boolean(input.isUnregistered);
     const selectedRank = Number(input.rank || 2);
 
     const rank =
     isUnregistered || isBustTarget
       ? maxRank
       : Math.min(selectedRank, maxSelectableRank);
-      
+
     const baseScore = getRankBaseScore(rank);
     const sevenCount = Number(input.sevenCount || 0);
     const sevenMultiplier = getSevenMultiplier(sevenCount);
@@ -366,6 +377,10 @@ function calculateRoundScores({
 
     if (roundMode === "perfect") {
       multiplierLabels.push("퍼펙트 ×2");
+    }
+
+    if (roundMode === "hoolbogi") {
+      multiplierLabels.push("훌보기 ×2");
     }
 
     if (roundMode === "hoolbak") {
@@ -387,6 +402,11 @@ function calculateRoundScores({
     if (sevenCount > 0) {
       multiplier *= sevenMultiplier;
       multiplierLabels.push(`7 ${sevenCount}장 ×${sevenMultiplier}`);
+    }
+
+    if (roundMode === "hoolbogi" && multiplier > HOOLBOGI_MULTIPLIER_CAP) {
+      multiplier = HOOLBOGI_MULTIPLIER_CAP;
+      multiplierLabels.push(`상한 ×${HOOLBOGI_MULTIPLIER_CAP} 적용`);
     }
 
     const rawScore = baseScore * multiplier;
@@ -497,6 +517,7 @@ function getDetailMultiplierFactors(round, detail) {
   };
 
   if (round.roundMode === "perfect") addFactor(2, "퍼펙트");
+  if (round.roundMode === "hoolbogi") addFactor(2, "훌보기");
   if (round.roundMode === "hoolbak") addFactor(2, "훌박");
 
   if (round.roundMode === "hand-stop") {
@@ -523,6 +544,18 @@ function getDetailMultiplierFactors(round, detail) {
 
   if (factors.length === 0 && Number(detail?.multiplier) > 1) {
     addFactor(detail.multiplier, "적용 배수");
+  }
+
+  if (round.roundMode === "hoolbogi") {
+    const rawProduct = factors.reduce((product, factor) => product * factor.multiplier, 1);
+
+    if (rawProduct > HOOLBOGI_MULTIPLIER_CAP) {
+      factors.length = 0;
+      factors.push({
+        multiplier: HOOLBOGI_MULTIPLIER_CAP,
+        label: `훌보기 상한 ×${HOOLBOGI_MULTIPLIER_CAP} 적용`,
+      });
+    }
   }
 
   return factors;
@@ -737,6 +770,17 @@ function RuleBookModal({ onClose }) {
               <p>패자 전원에게 퍼펙트 ×2가 적용된다.</p>
               <p>퍼펙트훌라에서는 패자 전원이 자동 미등록이므로 미등록 ×2도 함께 적용된다.</p>
               <p>즉, 기본적으로 패자에게 퍼펙트 ×2와 미등록 ×2가 같이 적용된다.</p>
+            </div>
+          </details>
+
+          <details>
+            <summary>훌보기</summary>
+            <div className="rule-content">
+              <p>훌보기는 마지막 판에서 진행하는 강제 퍼펙트훌라 규칙이다.</p>
+              <p>패자 전원이 퍼펙트훌라처럼 강제 미등록 처리되며 훌보기 ×2와 미등록 ×2가 적용된다.</p>
+              <p>7 보유 배수도 그대로 중복 적용된다.</p>
+              <p>다만 여러 배수가 겹쳐도 최종 배수는 최대 ×{HOOLBOGI_MULTIPLIER_CAP}를 넘지 않는다.</p>
+              <p>예: 퍼펙트 ×2, 미등록 ×2, 7 보유 2장 ×4가 겹치면 원래는 ×16이지만 훌보기에서는 ×8로 제한된다.</p>
             </div>
           </details>
 
@@ -1763,16 +1807,16 @@ function App() {
             const input = playerInputs[player.id] || {};
             const isBustSelectable = ["thankyou", "stop"].includes(roundMode);
             const isBustTarget = bustTargetId === player.id;
-            const isPerfectMode = roundMode === "perfect";
-            const isUnregistered = isPerfectMode || Boolean(input.isUnregistered);
+            const isAutoUnregisteredMode = isForcedUnregisteredMode(roundMode);
+            const isUnregistered = isAutoUnregisteredMode || Boolean(input.isUnregistered);
             const isRankLocked = isUnregistered || isBustTarget;
             const maxRank = activePlayerIds.length;
 
             const autoLastCount = loserPlayers.filter((loser) => {
               const loserInput = playerInputs[loser.id] || {};
-            
+
               return (
-                roundMode === "perfect" ||
+                isAutoUnregisteredMode ||
                 Boolean(loserInput.isUnregistered) ||
                 bustTargetId === loser.id
               );
@@ -1849,7 +1893,7 @@ function App() {
                   <button
                     type="button"
                     className={isUnregistered ? "toggle-button active" : "toggle-button"}
-                    disabled={isPerfectMode}
+                    disabled={isAutoUnregisteredMode}
                     onClick={() =>
                       updatePlayerInput(
                         player.id,
@@ -1858,7 +1902,7 @@ function App() {
                       )
                     }
                   >
-                    {isPerfectMode
+                    {isAutoUnregisteredMode
                       ? "자동 미등록 ×2 적용중"
                       : isUnregistered
                         ? "미등록 ×2 적용중"
