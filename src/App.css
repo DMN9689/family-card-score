@@ -475,7 +475,7 @@ p {
 }
 
 .toggle-grid {
-  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(70px, 1fr));
 }
 
 .winner-button-grid {

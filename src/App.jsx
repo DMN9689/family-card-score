@@ -1564,9 +1564,9 @@ function App() {
           <div className="settings-block">
             <h3>이름 변경</h3>
             <div className="name-grid">
-              {DEFAULT_PLAYERS.map((player) => (
+              {DEFAULT_PLAYERS.map((player, index) => (
                 <label key={player.id}>
-                  <span>{getPlayerName(currentGame.playerNames, player.id)}</span>
+                  <span>{index + 1}</span>
                   <input
                     value={draftPlayerNames[player.id] || ""}
                     onChange={(event) =>
