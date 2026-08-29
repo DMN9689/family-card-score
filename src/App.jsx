@@ -859,6 +859,12 @@ function App() {
 
   const maxRoundWinCount = Math.max(0, ...Object.values(roundWinCounts));
 
+  const activePlayerTotalScores = activePlayers.map((player) => totalScores[player.id] || 0);
+  const maxTotalScore = activePlayerTotalScores.length
+    ? Math.max(...activePlayerTotalScores)
+    : 0;
+  const hasTotalScoreLead = activePlayerTotalScores.some((score) => score !== maxTotalScore);
+
   const overallStats = useMemo(() => {
     const wins = {};
 
@@ -1156,16 +1162,6 @@ function App() {
     setIsUnlocked(true);
     setAccessCodeInput("");
     setAccessError("");
-  }
-
-  function handleLock() {
-    localStorage.removeItem(ACCESS_UNLOCK_STORAGE_KEY);
-    setIsUnlocked(false);
-    setGames([]);
-    setCurrentGameIndex(0);
-    setFirebaseError("");
-    resetRoundForm();
-    scrollToTop();
   }
 
   async function handleApplySettings() {
@@ -1493,17 +1489,6 @@ function App() {
         </div>
       </section>
 
-      <header className="app-header">
-        <div>
-          <p className="eyebrow">우리집 전용</p>
-          <h1>훌라 점수 계산기</h1>
-          <p>게임별 기록 저장 · 자동 점수 계산 · 모바일 입력 최적화</p>
-        </div>
-        <button type="button" className="small-button" onClick={handleLock}>
-          잠그기
-        </button>
-      </header>
-
       {firebaseError && (
         <section className="panel sync-error" role="alert">
           <strong>공유 저장 상태 확인 필요</strong>
@@ -1583,9 +1568,14 @@ function App() {
             {activePlayers.map((player) => {
               const wins = roundWinCounts[player.id] || 0;
               const isRoundLeader = maxRoundWinCount > 0 && wins === maxRoundWinCount;
+              const isScoreLeader =
+                hasTotalScoreLead && (totalScores[player.id] || 0) === maxTotalScore;
 
               return (
-                <div key={player.id} className="score-card">
+                <div
+                  key={player.id}
+                  className={isScoreLeader ? "score-card score-leader" : "score-card"}
+                >
                   <span>{player.name}</span>
                   {wins > 0 && (
                     <span className={isRoundLeader ? "win-badge leader" : "win-badge"}>

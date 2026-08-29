@@ -99,42 +99,11 @@ p {
   padding: 22px 14px 56px;
 }
 
-.app-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  margin: 8px 0 22px;
-  padding: 22px 4px 24px;
-}
-
-.app-header > div {
-  min-width: 0;
-}
-
-.app-header .eyebrow {
-  margin-bottom: 11px;
-}
-
-.app-header h1 {
-  margin-bottom: 13px;
-  line-height: 1.06;
-}
-
-.app-header p:last-child {
-  max-width: 560px;
-  margin-bottom: 0;
-  line-height: 1.62;
-}
-
-.app-header .small-button {
-  margin-top: 8px;
-}
-
 .game-timer {
   display: grid;
-  gap: 14px;
+  gap: 10px;
   margin-top: 8px;
+  padding: 12px 18px;
   border-color: rgba(37, 99, 235, 0.22);
   background:
     linear-gradient(135deg, rgba(239, 246, 255, 0.96), rgba(255, 255, 255, 0.96));
@@ -159,7 +128,7 @@ p {
 .timer-display {
   display: block;
   font-variant-numeric: tabular-nums;
-  font-size: clamp(2.35rem, 10vw, 4.25rem);
+  font-size: clamp(1.9rem, 7.5vw, 3.2rem);
   line-height: 1;
   letter-spacing: -0.055em;
 }
@@ -186,12 +155,12 @@ p {
 }
 
 .timer-adjust-grid button {
-  min-height: 44px;
+  min-height: 36px;
   border: 1px solid #bfdbfe;
   border-radius: 14px;
   background: #ffffff;
   color: #1e40af;
-  padding: 9px 8px;
+  padding: 6px 8px;
   font-weight: 680;
 }
 
@@ -202,7 +171,7 @@ p {
 }
 
 .timer-action-row button {
-  min-height: 44px;
+  min-height: 36px;
   border-radius: 14px;
 }
 
@@ -397,6 +366,12 @@ p {
   border-radius: 22px;
   background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
   padding: 14px;
+}
+
+.score-card.score-leader {
+  border-color: #f5c451;
+  background: linear-gradient(180deg, #fffbeb 0%, #fef3c7 100%);
+  box-shadow: 0 10px 24px rgba(217, 155, 15, 0.18);
 }
 
 .score-card span {
@@ -935,12 +910,17 @@ p {
     padding: 15px;
   }
 
+  .game-timer {
+    padding: 10px 15px;
+    gap: 8px;
+  }
+
   .timer-adjust-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .timer-display {
-    font-size: clamp(2.25rem, 15vw, 3.5rem);
+    font-size: clamp(1.8rem, 11vw, 2.8rem);
   }
 
   .lock-panel {
@@ -959,7 +939,6 @@ p {
 
   .section-title-row,
   .mode-header,
-  .app-header,
   .rules-modal-header {
     flex-direction: column;
   }
