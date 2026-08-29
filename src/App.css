@@ -393,6 +393,48 @@ p {
   color: #92400e;
 }
 
+.rank-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.rank-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  background: #ffffff;
+  padding: 12px 14px;
+}
+
+.rank-row.leader {
+  border-color: #f5c451;
+  background: linear-gradient(180deg, #fffbeb 0%, #fef3c7 100%);
+}
+
+.rank-row-index {
+  flex: 0 0 auto;
+  width: 22px;
+  color: #94a3b8;
+  font-weight: 700;
+  text-align: center;
+}
+
+.rank-row-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: #111827;
+  font-weight: 650;
+}
+
+.rank-row-wins {
+  flex: 0 0 auto;
+  color: #2563eb;
+  font-size: 1.1rem;
+}
+
 .score-card strong {
   font-size: 2rem;
   font-weight: 720;

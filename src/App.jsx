@@ -797,17 +797,22 @@ function OverallStatsModal({ stats, totalGames, totalRounds, onClose }) {
           </button>
         </div>
 
-        <div className="score-grid">
-          {stats.map((stat) => (
-            <div key={stat.id} className="score-card">
-              <span>{stat.name}</span>
-              <strong className={stat.isLeader ? "positive" : ""}>
-                {stat.isLeader && stat.wins > 0 ? "👑 " : ""}
-                {stat.wins}승
-              </strong>
-            </div>
-          ))}
-        </div>
+        {stats.length ? (
+          <div className="rank-list">
+            {stats.map((stat, index) => (
+              <div key={stat.name} className={stat.isLeader ? "rank-row leader" : "rank-row"}>
+                <span className="rank-row-index">{index + 1}</span>
+                <span className="rank-row-name">
+                  {stat.isLeader ? "👑 " : ""}
+                  {stat.name}
+                </span>
+                <strong className="rank-row-wins">{stat.wins}승</strong>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="empty-text">아직 저장된 라운드가 없어.</p>
+        )}
       </div>
     </div>
   );
@@ -902,20 +907,26 @@ function App() {
     const wins = {};
 
     games.forEach((game) => {
+      const gamePlayerNames = game.playerNames || {};
+
       (game.rounds || []).forEach((round) => {
-        if (round.winnerId) wins[round.winnerId] = (wins[round.winnerId] || 0) + 1;
+        const winnerName = (gamePlayerNames[round.winnerId] || "").trim();
+        if (!winnerName) return;
+
+        wins[winnerName] = (wins[winnerName] || 0) + 1;
       });
     });
 
     const maxWins = Math.max(0, ...Object.values(wins));
 
-    return DEFAULT_PLAYERS.map((player) => ({
-      id: player.id,
-      name: getPlayerName(playerNames, player.id),
-      wins: wins[player.id] || 0,
-      isLeader: maxWins > 0 && (wins[player.id] || 0) === maxWins,
-    }));
-  }, [games, playerNames]);
+    return Object.entries(wins)
+      .map(([name, count]) => ({
+        name,
+        wins: count,
+        isLeader: maxWins > 0 && count === maxWins,
+      }))
+      .sort((a, b) => b.wins - a.wins);
+  }, [games]);
 
   const totalRoundsAllGames = games.reduce((sum, game) => sum + (game.rounds?.length || 0), 0);
 
