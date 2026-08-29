@@ -1755,7 +1755,9 @@ function App() {
           aria-expanded={showOtherModes || isSecondaryModeSelected}
           onClick={() => setShowOtherModes((value) => !value)}
         >
-          {showOtherModes || isSecondaryModeSelected ? "기타 종료방식 접기" : "기타 종료방식 (땡큐훌라 · 족보 스톱)"}
+          {showOtherModes || isSecondaryModeSelected
+            ? "기타 종료방식 접기"
+            : `기타 종료방식 (${SECONDARY_ROUND_MODES.map((mode) => mode.label).join(" · ")})`}
         </button>
 
         {(showOtherModes || isSecondaryModeSelected) && (
